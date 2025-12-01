@@ -1,3 +1,5 @@
+#![allow(clippy::needless_pass_by_value)]
+
 use std::collections::HashMap;
 
 use bevy::input::mouse::{MouseMotion, MouseWheel};
@@ -14,45 +16,13 @@ const LAYER_CANVAS: RenderLayers = RenderLayers::layer(0);
 #[derive(Component)]
 pub(crate) struct MainCamera;
 
-/// Identifier for a reusable toggle interaction.
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
-enum ToggleId {
-    LightAttachment,
-}
+/// Button that resets the camera to its original position/orientation.
+#[derive(Component)]
+pub(crate) struct ResetCameraButton;
 
-// struct AmbientLight
-
-impl ToggleId {
-    fn label(self, state: bool) -> &'static str {
-        match (self, state) {
-            (ToggleId::LightAttachment, true) => "Light: Attached",
-            (ToggleId::LightAttachment, false) => "Light: Detached",
-        }
-    }
-}
-
-// XXX: REVIEW: this is very oop like implementation, better?
-
-/// Stores the current on/off state for each toggle.
-#[derive(Resource, Default)]
-pub(crate) struct ToggleStates {
-    states: HashMap<ToggleId, bool>,
-}
-
-impl ToggleStates {
-    fn register(&mut self, id: ToggleId, initial_state: bool) {
-        self.states.entry(id).or_insert(initial_state);
-    }
-
-    fn get(&self, id: ToggleId) -> bool {
-        self.states.get(&id).copied().unwrap_or(false)
-    }
-
-    fn toggle(&mut self, id: ToggleId) -> bool {
-        let new_state = !self.get(id);
-        self.states.insert(id, new_state);
-        new_state
-    }
+#[derive(Component)]
+pub(crate) struct LightAttachmentButton {
+    attached: bool,
 }
 
 /// Marks an entity that spawned the main camera.
@@ -62,25 +32,6 @@ pub(crate) struct MainCameraEntity(pub Entity);
 /// Marks the primary directional light used for shading.
 #[derive(Resource)]
 pub(crate) struct MainLightEntity(pub Entity);
-
-/// Component identifying a toggle button instance.
-#[derive(Component)]
-pub(crate) struct ToggleButton {
-    id: ToggleId,
-}
-
-/// Component carried by the text to update when a toggle changes.
-#[derive(Component)]
-pub(crate) struct ToggleText {
-    id: ToggleId,
-}
-
-/// Event emitted whenever a toggle switches state.
-#[derive(Event)]
-pub struct ToggleEvent {
-    id: ToggleId,
-    pub state: bool,
-}
 
 /// Stores camera orbit information and the original configuration so it can be restored.
 #[derive(Resource)]
@@ -92,10 +43,6 @@ pub(crate) struct CameraRig {
     initial_rotation: Quat,
     initial_scale: Vec3,
 }
-
-/// Button that resets the camera to its original position/orientation.
-#[derive(Component)]
-pub(crate) struct ResetCameraButton;
 
 // System to set up the 3D scene
 pub(crate) fn setup_scene(
@@ -148,11 +95,7 @@ pub(crate) fn setup_scene(
 }
 
 // System to set up the camera
-pub fn setup_cameras(
-    mut commands: Commands,
-    mut toggle_states: ResMut<ToggleStates>,
-    windows: Query<&Window>,
-) {
+pub fn setup_cameras(mut commands: Commands, windows: Query<&Window>) {
     let window = windows.single().unwrap();
     let viewport_size = UVec2::new(200, 200);
     let bottom_left_y = window.physical_height() - viewport_size.y - 10;
@@ -219,8 +162,6 @@ pub fn setup_cameras(
         ))
         .id();
 
-    toggle_states.register(ToggleId::LightAttachment, true);
-
     commands.insert_resource(MainCameraEntity(camera_entity));
     commands.insert_resource(MainLightEntity(light_entity));
     commands.insert_resource(CameraRig {
@@ -234,7 +175,7 @@ pub fn setup_cameras(
 }
 
 // Setup minimal UI with toggle buttons
-pub fn setup_buttons(mut commands: Commands, toggle_states: Res<ToggleStates>) {
+pub fn setup_buttons(mut commands: Commands) {
     // buttons at top-left
     commands
         .spawn((
@@ -249,38 +190,29 @@ pub fn setup_buttons(mut commands: Commands, toggle_states: Res<ToggleStates>) {
             BackgroundColor(Color::NONE),
         ))
         .with_children(|parent| {
-            let mut spawn_button = |id: ToggleId| {
-                let state = toggle_states.get(id);
-                let label = id.label(state);
-
-                parent
-                    .spawn((
-                        Button,
-                        Node {
-                            padding: UiRect::axes(Val::Px(10.0), Val::Px(6.0)),
-                            border: UiRect::all(Val::Px(1.0)),
+            parent
+                .spawn((
+                    Button,
+                    Node {
+                        padding: UiRect::axes(Val::Px(10.0), Val::Px(6.0)),
+                        border: UiRect::all(Val::Px(1.0)),
+                        ..default()
+                    },
+                    BorderColor(Color::srgb(0.3, 0.3, 0.3)),
+                    BackgroundColor(Color::srgb(0.15, 0.15, 0.15)),
+                    LightAttachmentButton { attached: false },
+                ))
+                .with_children(|button| {
+                    button.spawn((
+                        Text::new("Light: Detached"),
+                        TextFont {
+                            font: default(),
+                            font_size: 12.0,
                             ..default()
                         },
-                        BorderColor(Color::srgb(0.3, 0.3, 0.3)),
-                        BackgroundColor(Color::srgb(0.15, 0.15, 0.15)),
-                        ToggleButton { id },
-                    ))
-                    .with_children(|button| {
-                        button.spawn((
-                            Text::new(label),
-                            TextFont {
-                                font: default(),
-                                font_size: 12.0,
-                                ..default()
-                            },
-                            TextColor(Color::WHITE),
-                            ToggleText { id },
-                        ));
-                    });
-            };
-
-            let id = ToggleId::LightAttachment;
-            spawn_button(id);
+                        TextColor(Color::WHITE),
+                    ));
+                });
 
             parent
                 .spawn((
@@ -491,33 +423,47 @@ pub(crate) fn camera_controls(
     }
 }
 
-// Handle button interaction: toggle state and update label
 #[allow(clippy::type_complexity)]
-pub fn toggle_button(
+pub fn toggle_light_attachment(
+    mut commands: Commands,
+    light: Res<MainLightEntity>,
+    camera: Res<MainCameraEntity>,
     mut interactions: Query<
-        (&Interaction, &mut BackgroundColor, &ToggleButton),
-        (Changed<Interaction>, With<Button>),
+        (
+            &Interaction,
+            &mut BackgroundColor,
+            &mut LightAttachmentButton,
+            &Children,
+        ),
+        (Changed<Interaction>, With<LightAttachmentButton>),
     >,
-    mut texts: Query<(&ToggleText, &mut Text)>,
-    mut toggle_states: ResMut<ToggleStates>,
-    mut toggle_events: EventWriter<ToggleEvent>,
+    mut texts: Query<&mut Text>,
 ) {
-    for (interaction, mut background, toggle_button) in &mut interactions {
-        match *interaction {
+    for (interaction, mut background, mut button_state, children) in &mut interactions {
+        match interaction {
             Interaction::Pressed => {
-                let new_state = toggle_states.toggle(toggle_button.id);
-                toggle_events.write(ToggleEvent {
-                    id: toggle_button.id,
-                    state: new_state,
-                });
+                *background = BackgroundColor(Color::srgb(0.25, 0.25, 0.25));
 
-                for (text_marker, mut text) in &mut texts {
-                    if text_marker.id == toggle_button.id {
-                        text.0 = ToggleId::label(toggle_button.id, new_state).into();
+                // Update the text inside the button
+                for child in children.iter() {
+                    if let Ok(mut text) = texts.get_mut(child) {
+                        text.0 = if button_state.attached {
+                            "Light: Attached".into()
+                        } else {
+                            "Light: Detached".into()
+                        };
                     }
                 }
 
-                *background = BackgroundColor(Color::srgb(0.25, 0.25, 0.25));
+                button_state.attached = !button_state.attached;
+
+                if button_state.attached {
+                    commands.entity(light.0).insert(ChildOf(camera.0));
+                    info!("Light attached to camera");
+                } else {
+                    commands.entity(light.0).remove::<ChildOf>();
+                    info!("Light detached from camera");
+                }
             }
             Interaction::Hovered => {
                 *background = BackgroundColor(Color::srgb(0.2, 0.2, 0.2));
@@ -534,7 +480,7 @@ pub fn toggle_button(
 pub fn reset_camera_button_interaction(
     mut interactions: Query<
         (&Interaction, &mut BackgroundColor),
-        (Changed<Interaction>, With<Button>, With<ResetCameraButton>),
+        (Changed<Interaction>, With<ResetCameraButton>),
     >,
     camera_entity: Option<Res<MainCameraEntity>>,
     mut camera_query: Query<&mut Transform, With<Camera3d>>,
@@ -564,48 +510,6 @@ pub fn reset_camera_button_interaction(
             }
             Interaction::None => {
                 *background = BackgroundColor(Color::srgb(0.15, 0.15, 0.15));
-            }
-        }
-    }
-}
-
-// Respond to toggle events by applying the desired world changes
-pub fn handle_toggle_events(
-    mut toggle_events: EventReader<ToggleEvent>,
-    camera_entity: Option<Res<MainCameraEntity>>,
-    light_entity: Option<Res<MainLightEntity>>,
-    global_light_xforms: Query<&GlobalTransform, With<DirectionalLight>>,
-    mut commands: Commands,
-) {
-    let Some(camera_entity) = camera_entity else {
-        return;
-    };
-    let Some(light_entity) = light_entity else {
-        return;
-    };
-
-    // XXX: only single event at the moment
-    for event in toggle_events.read() {
-        match event.id {
-            ToggleId::LightAttachment => {
-                if event.state {
-                    // Re-attach to camera; use default local transform so light follows camera orientation.
-                    commands
-                        .entity(light_entity.0)
-                        .insert(ChildOf(camera_entity.0))
-                        .insert(Transform::default());
-                } else if let Ok(global_transform) = global_light_xforms.get(light_entity.0) {
-                    let (scale, rotation, translation) =
-                        global_transform.to_scale_rotation_translation();
-                    commands.entity(light_entity.0).remove::<ChildOf>();
-                    commands.entity(light_entity.0).insert(Transform {
-                        translation,
-                        rotation,
-                        scale,
-                    });
-                } else {
-                    commands.entity(light_entity.0).remove::<ChildOf>();
-                }
             }
         }
     }

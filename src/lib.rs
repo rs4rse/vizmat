@@ -12,9 +12,9 @@ pub(crate) mod structure;
 use crate::client::{poll_websocket_stream, setup_websocket_stream};
 use crate::io::load_crystal;
 use crate::structure::{update_crystal_system, UpdateStructure};
-use crate::ui::{camera_controls, refresh_atoms_system, setup_cameras, setup_scene};
+use crate::ui::reset_camera_button_interaction;
 use crate::ui::{
-    handle_toggle_events, reset_camera_button_interaction, toggle_button, ToggleEvent, ToggleStates,
+    camera_controls, refresh_atoms_system, setup_cameras, setup_scene, toggle_light_attachment,
 };
 use crate::ui::{setup_buttons, spawn_axis};
 
@@ -36,9 +36,7 @@ pub fn run_app() {
             filter: "wgpu=error,bevy_render=info,bevy_ecs=trace".to_string(),
             custom_layer: |_| None,
         }))
-        .init_resource::<ToggleStates>()
         .add_event::<UpdateStructure>()
-        .add_event::<ToggleEvent>()
         .add_systems(Startup, load_crystal)
         .add_systems(Startup, setup_scene.after(load_crystal))
         .add_systems(
@@ -57,9 +55,8 @@ pub fn run_app() {
                 poll_websocket_stream,
                 update_crystal_system,
                 refresh_atoms_system,
-                toggle_button,
+                toggle_light_attachment,
                 reset_camera_button_interaction,
-                handle_toggle_events,
                 camera_controls,
             ),
         )
