@@ -16,11 +16,9 @@ use crate::io::{
 };
 use crate::structure::{update_crystal_system, UpdateStructure};
 use crate::ui::{
-    camera_controls, handle_load_default_button, refresh_atoms_system, setup_cameras,
-    setup_file_ui, setup_scene, update_file_ui, update_scene, reset_camera_button_interaction
-}
-use crate::ui::{
-    camera_controls, refresh_atoms_system, setup_cameras, setup_scene, toggle_light_attachment,
+    camera_controls, handle_load_default_button, refresh_atoms_system,
+    reset_camera_button_interaction, setup_cameras, setup_file_ui, setup_scene,
+    toggle_light_attachment, update_file_ui, update_scene,
 };
 use crate::ui::{setup_buttons, spawn_axis};
 
