@@ -17,10 +17,10 @@ use crate::io::{
 use crate::structure::{update_crystal_system, UpdateStructure};
 use crate::ui::{
     camera_controls, handle_load_default_button, refresh_atoms_system, setup_cameras,
-    setup_file_ui, setup_scene, update_file_ui, update_scene,
-};
+    setup_file_ui, setup_scene, update_file_ui, update_scene, reset_camera_button_interaction
+}
 use crate::ui::{
-    handle_toggle_events, reset_camera_button_interaction, toggle_button, ToggleEvent, ToggleStates,
+    camera_controls, refresh_atoms_system, setup_cameras, setup_scene, toggle_light_attachment,
 };
 use crate::ui::{setup_buttons, spawn_axis};
 
@@ -42,10 +42,8 @@ pub fn run_app() {
             filter: "wgpu=error,bevy_render=info,bevy_ecs=trace".to_string(),
             custom_layer: |_| None,
         }))
-        .init_resource::<ToggleStates>()
         .init_resource::<FileDragDrop>()
         .add_event::<UpdateStructure>()
-        .add_event::<ToggleEvent>()
         .add_event::<bevy::window::FileDragAndDrop>()
         .add_systems(Startup, load_default_crystal)
         .add_systems(
@@ -70,9 +68,8 @@ pub fn run_app() {
                 update_crystal_from_file,
                 update_file_ui,
                 refresh_atoms_system,
-                toggle_button,
+                toggle_light_attachment,
                 reset_camera_button_interaction,
-                handle_toggle_events,
                 handle_load_default_button,
                 camera_controls,
                 update_scene,
