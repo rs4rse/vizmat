@@ -31,10 +31,12 @@ pub struct UpdateStructure {
 
 // System to handle incoming structure updates
 pub fn update_crystal_system(
-    mut crystal: ResMut<Crystal>,
+    crystal: Option<ResMut<Crystal>>,
     mut events: EventReader<UpdateStructure>,
 ) {
-    for event in events.read() {
-        crystal.atoms = event.atoms.clone();
+    if let Some(mut crystal) = crystal {
+        for event in events.read() {
+            crystal.atoms.clone_from(&event.atoms);
+        }
     }
 }

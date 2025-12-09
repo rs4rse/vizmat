@@ -29,14 +29,14 @@ pub(crate) fn setup_file_ui(mut commands: Commands) {
     commands.spawn((
         Text::new("Drag and drop an XYZ file here to visualize"),
         TextFont {
-            font_size: 20.0,
+            font_size: 12.0,
             ..default()
         },
         TextColor(Color::WHITE),
         Node {
             position_type: PositionType::Absolute,
             top: Val::Px(10.0),
-            left: Val::Px(10.0),
+            right: Val::Px(10.0),
             ..default()
         },
         FileUploadText,
@@ -45,26 +45,40 @@ pub(crate) fn setup_file_ui(mut commands: Commands) {
     // Add button to load default structure
     commands
         .spawn((
-            Button,
             Node {
                 position_type: PositionType::Absolute,
-                top: Val::Px(40.0),
-                left: Val::Px(10.0),
-                padding: UiRect::all(Val::Px(10.0)),
+                right: Val::Px(8.0),
+                top: Val::Px(18.0),
+                flex_direction: FlexDirection::Column,
+                row_gap: Val::Px(6.0),
                 ..default()
             },
-            BackgroundColor(Color::srgb(0.15, 0.15, 0.15)),
-            LoadDefaultButton,
+            BackgroundColor(Color::NONE),
         ))
         .with_children(|parent| {
-            parent.spawn((
-                Text::new("Load Default Structure"),
-                TextFont {
-                    font_size: 18.0,
-                    ..default()
-                },
-                TextColor(Color::WHITE),
-            ));
+            parent
+                .spawn((
+                    Button,
+                    Node {
+                        padding: UiRect::axes(Val::Px(10.0), Val::Px(6.0)),
+                        border: UiRect::all(Val::Px(1.0)),
+                        ..default()
+                    },
+                    BorderColor(Color::srgb(0.3, 0.3, 0.3)),
+                    BackgroundColor(Color::srgb(0.15, 0.15, 0.15)),
+                    LoadDefaultButton,
+                ))
+                .with_children(|button| {
+                    button.spawn((
+                        Text::new("Load Default Structure"),
+                        TextFont {
+                            font: default(),
+                            font_size: 12.0,
+                            ..default()
+                        },
+                        TextColor(Color::WHITE),
+                    ));
+                });
         });
 }
 
@@ -112,7 +126,7 @@ pub(crate) struct CameraRig {
     initial_rotation: Quat,
     initial_scale: Vec3,
 }
-  
+
 /// Button that resets the camera to its original position/orientation.
 #[derive(Component)]
 pub(crate) struct CameraButton;
@@ -151,15 +165,7 @@ pub(crate) fn handle_load_default_button(
 }
 
 // System to set up the 3D scene
-pub(crate) fn setup_scene(
-    mut commands: Commands,
-    mut meshes: ResMut<Assets<Mesh>>,
-    mut materials: ResMut<Assets<StandardMaterial>>,
-    crystal: Res<Crystal>,
-) {
-    // Only spawn atoms if we have a crystal resource
-    spawn_atoms(&mut commands, &mut meshes, &mut materials, &crystal);
-
+pub(crate) fn setup_scene(mut commands: Commands) {
     // Add ambient light
     commands.insert_resource(AmbientLight {
         color: Color::WHITE,
@@ -256,16 +262,6 @@ pub fn setup_cameras(mut commands: Commands, windows: Query<&Window>) {
             MainCamera,
         ))
         .with_children(|parent| {
-            // Attach a directional light to the camera
-            parent.spawn((
-                DirectionalLight {
-                    shadows_enabled: true,
-                    ..default()
-                },
-                Transform::from_rotation(Quat::from_rotation_x(-std::f32::consts::FRAC_PI_4)),
-            ));
-        })
-        .with_children(|parent| {
             // GIZMO CAMERA
             parent.spawn((
                 Camera3d { ..default() },
@@ -291,7 +287,7 @@ pub fn setup_cameras(mut commands: Commands, windows: Query<&Window>) {
                 shadows_enabled: true,
                 ..default()
             },
-            Transform::default(), // inherit camera rotation; light points along -Z in local space
+            Transform::from_rotation(Quat::from_rotation_x(-std::f32::consts::FRAC_PI_4)),
             ChildOf(camera_entity),
         ))
         .id();
@@ -431,14 +427,16 @@ pub(crate) fn spawn_axis(
 // System to refresh atoms when Crystal resource changes
 pub fn refresh_atoms_system(
     mut commands: Commands,
-    crystal: Res<Crystal>,
+    crystal: Option<Res<Crystal>>,
     atom_entities: Query<Entity, With<AtomEntity>>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
 ) {
     // Only run when Crystal resource changes
-    if !crystal.is_changed() {
-        return;
+    if let Some(ref crystal) = crystal {
+        if !crystal.is_changed() {
+            return;
+        }
     }
 
     // Despawn all existing atoms
@@ -450,29 +448,31 @@ pub fn refresh_atoms_system(
     let sphere_mesh = meshes.add(Mesh::from(Sphere { radius: 1.0 }));
     let mut element_materials: HashMap<String, Handle<StandardMaterial>> = HashMap::new();
 
-    for atom in &crystal.atoms {
-        // Get or create material for this element
-        let material = element_materials
-            .entry(atom.element.clone())
-            .or_insert_with(|| {
-                materials.add(StandardMaterial {
-                    base_color: get_element_color(&atom.element),
-                    metallic: 0.0,
-                    ..default()
+    if let Some(crystal) = crystal {
+        for atom in &crystal.atoms {
+            // Get or create material for this element
+            let material = element_materials
+                .entry(atom.element.clone())
+                .or_insert_with(|| {
+                    materials.add(StandardMaterial {
+                        base_color: get_element_color(&atom.element),
+                        metallic: 0.0,
+                        ..default()
+                    })
                 })
-            })
-            .clone();
+                .clone();
 
-        commands.spawn((
-            Mesh3d(sphere_mesh.clone()),
-            MeshMaterial3d(material),
-            Transform {
-                translation: Vec3::new(atom.x, atom.y, atom.z),
-                scale: Vec3::splat(get_element_size(&atom.element)),
-                ..default()
-            },
-            AtomEntity,
-        ));
+            commands.spawn((
+                Mesh3d(sphere_mesh.clone()),
+                MeshMaterial3d(material),
+                Transform {
+                    translation: Vec3::new(atom.x, atom.y, atom.z),
+                    scale: Vec3::splat(get_element_size(&atom.element)),
+                    ..default()
+                },
+                AtomEntity,
+            ));
+        }
     }
 }
 

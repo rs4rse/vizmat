@@ -43,7 +43,6 @@ pub fn run_app() {
         .init_resource::<FileDragDrop>()
         .add_event::<UpdateStructure>()
         .add_event::<bevy::window::FileDragAndDrop>()
-        .add_systems(Startup, load_default_crystal)
         .add_systems(
             Startup,
             (
@@ -54,7 +53,6 @@ pub fn run_app() {
                 setup_scene,
                 setup_websocket_stream,
             )
-                .after(load_default_crystal),
         )
         .add_systems(
             Update,
