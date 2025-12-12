@@ -91,7 +91,7 @@ pub(crate) fn update_file_ui(
         if let Some(path) = file_drag_drop.dragged_file() {
             if let Some(file_name) = path.file_name().and_then(|n| n.to_str()) {
                 // Update the text content
-                **text = format!("Loaded: {}", file_name);
+                **text = format!("Loaded: {file_name}");
             }
         } else {
             **text = "Drag and drop an XYZ file here to visualize".to_string();
@@ -127,10 +127,6 @@ pub(crate) struct CameraRig {
     initial_scale: Vec3,
 }
 
-/// Button that resets the camera to its original position/orientation.
-#[derive(Component)]
-pub(crate) struct CameraButton;
-
 // System to clear existing atoms when new crystal is loaded
 #[allow(dead_code)]
 pub fn clear_old_atoms(mut commands: Commands, atom_query: Query<Entity, With<AtomEntity>>) {
@@ -140,6 +136,7 @@ pub fn clear_old_atoms(mut commands: Commands, atom_query: Query<Entity, With<At
 }
 
 // System to handle button click to load default structure
+#[allow(clippy::type_complexity)]
 pub(crate) fn handle_load_default_button(
     mut interaction_query: Query<
         (&Interaction, &mut BackgroundColor),
@@ -162,16 +159,6 @@ pub(crate) fn handle_load_default_button(
             }
         }
     }
-}
-
-// System to set up the 3D scene
-pub(crate) fn setup_scene(mut commands: Commands) {
-    // Add ambient light
-    commands.insert_resource(AmbientLight {
-        color: Color::WHITE,
-        brightness: 0.3,
-        ..default()
-    });
 }
 
 // System to respawn atoms when crystal changes
@@ -281,19 +268,7 @@ pub fn setup_cameras(mut commands: Commands, windows: Query<&Window>) {
         })
         .id();
 
-    let light_entity = commands
-        .spawn((
-            DirectionalLight {
-                shadows_enabled: true,
-                ..default()
-            },
-            Transform::from_rotation(Quat::from_rotation_x(-std::f32::consts::FRAC_PI_4)),
-            ChildOf(camera_entity),
-        ))
-        .id();
-
     commands.insert_resource(MainCameraEntity(camera_entity));
-    commands.insert_resource(MainLightEntity(light_entity));
     commands.insert_resource(CameraRig {
         target: initial_target,
         distance: initial_translation.distance(initial_target),
@@ -302,6 +277,18 @@ pub fn setup_cameras(mut commands: Commands, windows: Query<&Window>) {
         initial_rotation,
         initial_scale,
     });
+}
+
+pub(crate) fn setup_light(mut commands: Commands, camera: Res<MainCameraEntity>) {
+    let light_entity = commands
+        .spawn((
+            DirectionalLight { ..default() },
+            Transform::from_rotation(Quat::from_rotation_x(-std::f32::consts::FRAC_PI_4)),
+            ChildOf(camera.0),
+        ))
+        .id();
+
+    commands.insert_resource(MainLightEntity(light_entity));
 }
 
 // Setup minimal UI with toggle buttons
@@ -334,7 +321,7 @@ pub fn setup_buttons(mut commands: Commands) {
                 ))
                 .with_children(|button| {
                     button.spawn((
-                        Text::new("Light: Detached"),
+                        Text::new("light not follow cam"),
                         TextFont {
                             font: default(),
                             font_size: 12.0,
@@ -571,6 +558,7 @@ pub fn toggle_light_attachment(
         ),
         (Changed<Interaction>, With<LightAttachmentButton>),
     >,
+    q_trans: Query<&GlobalTransform>,
     mut texts: Query<&mut Text>,
 ) {
     for (interaction, mut background, mut button_state, children) in &mut interactions {
@@ -578,25 +566,45 @@ pub fn toggle_light_attachment(
             Interaction::Pressed => {
                 *background = BackgroundColor(Color::srgb(0.25, 0.25, 0.25));
 
+                let old_state = button_state.attached;
+                let new_state = !button_state.attached;
+
+                button_state.attached = new_state;
+
+                if old_state {
+                    let light_trans = q_trans
+                        .get(light.0)
+                        .expect("light must have global transform when disattach");
+                    let camera_trans = q_trans
+                        .get(camera.0)
+                        .expect("camera must have global transform");
+                    let local = light_trans.reparented_to(camera_trans);
+                    commands
+                        .entity(light.0)
+                        .insert(local)
+                        .insert(ChildOf(camera.0));
+                    info!("Light attached to camera");
+                } else {
+                    let glb_trans = q_trans
+                        .get(light.0)
+                        .expect("light must have global transform when disattach");
+                    commands
+                        .entity(light.0)
+                        // preserve the world transform when detach
+                        .insert(Transform::from(*glb_trans))
+                        .remove::<ChildOf>();
+                    info!("Light detached from camera");
+                }
+
                 // Update the text inside the button
                 for child in children.iter() {
                     if let Ok(mut text) = texts.get_mut(child) {
-                        text.0 = if button_state.attached {
-                            "Light: Attached".into()
+                        text.0 = if new_state {
+                            "light follow cam".into()
                         } else {
-                            "Light: Detached".into()
+                            "light not follow cam".into()
                         };
                     }
-                }
-
-                button_state.attached = !button_state.attached;
-
-                if button_state.attached {
-                    commands.entity(light.0).insert(ChildOf(camera.0));
-                    info!("Light attached to camera");
-                } else {
-                    commands.entity(light.0).remove::<ChildOf>();
-                    info!("Light detached from camera");
                 }
             }
             Interaction::Hovered => {
