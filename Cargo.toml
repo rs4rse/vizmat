@@ -31,6 +31,7 @@ js-sys = "0.3"
 [features]
 webgpu = ["bevy/webgpu"]
 webgl2 = ["bevy/webgl2"]
+dev-track-location = ["bevy/track_location"]
 
 [lib]
 # need both, cdylib for wasm, rlib for main.rs

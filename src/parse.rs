@@ -2,8 +2,7 @@ use crate::structure::{Atom, Crystal};
 use anyhow::{Context, Result};
 
 // Function to parse XYZ file format from string content
-#[allow(dead_code)]
-fn parse_xyz_content(contents: &str) -> Result<Crystal> {
+pub(crate) fn parse_xyz_content(contents: &str) -> Result<Crystal> {
     let lines = contents.lines().collect::<Vec<&str>>();
 
     if lines.len() < 2 {
@@ -16,8 +15,11 @@ fn parse_xyz_content(contents: &str) -> Result<Crystal> {
         .parse()
         .context("Failed to parse number of atoms")?;
 
-    // Second line is a comment (we can skip it)
-    // Remaining lines contain atom data
+    // Second line may contain comment or extended XYZ properties
+    let _comment_line = lines[1].trim();
+
+    // Parse extended XYZ properties if present (basic implementation)
+    // For now, we'll focus on the basic XYZ format
 
     let mut atoms = Vec::new();
 

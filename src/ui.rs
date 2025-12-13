@@ -16,6 +16,89 @@ const LAYER_CANVAS: RenderLayers = RenderLayers::layer(0);
 #[derive(Component)]
 pub(crate) struct MainCamera;
 
+// Component for UI text
+#[derive(Component)]
+pub(crate) struct FileUploadText;
+
+// Component for load default button
+#[derive(Component)]
+pub(crate) struct LoadDefaultButton;
+
+// System to set up file upload UI
+pub(crate) fn setup_file_ui(mut commands: Commands) {
+    commands.spawn((
+        Text::new("Drag and drop an XYZ file here to visualize"),
+        TextFont {
+            font_size: 12.0,
+            ..default()
+        },
+        TextColor(Color::WHITE),
+        Node {
+            position_type: PositionType::Absolute,
+            top: Val::Px(10.0),
+            right: Val::Px(10.0),
+            ..default()
+        },
+        FileUploadText,
+    ));
+
+    // Add button to load default structure
+    commands
+        .spawn((
+            Node {
+                position_type: PositionType::Absolute,
+                right: Val::Px(8.0),
+                top: Val::Px(18.0),
+                flex_direction: FlexDirection::Column,
+                row_gap: Val::Px(6.0),
+                ..default()
+            },
+            BackgroundColor(Color::NONE),
+        ))
+        .with_children(|parent| {
+            parent
+                .spawn((
+                    Button,
+                    Node {
+                        padding: UiRect::axes(Val::Px(10.0), Val::Px(6.0)),
+                        border: UiRect::all(Val::Px(1.0)),
+                        ..default()
+                    },
+                    BorderColor(Color::srgb(0.3, 0.3, 0.3)),
+                    BackgroundColor(Color::srgb(0.15, 0.15, 0.15)),
+                    LoadDefaultButton,
+                ))
+                .with_children(|button| {
+                    button.spawn((
+                        Text::new("Load Default Structure"),
+                        TextFont {
+                            font: default(),
+                            font_size: 12.0,
+                            ..default()
+                        },
+                        TextColor(Color::WHITE),
+                    ));
+                });
+        });
+}
+
+// System to update file upload UI
+pub(crate) fn update_file_ui(
+    file_drag_drop: Res<crate::io::FileDragDrop>,
+    mut text_query: Query<&mut Text, With<FileUploadText>>,
+) {
+    if let Ok(mut text) = text_query.single_mut() {
+        if let Some(path) = file_drag_drop.dragged_file() {
+            if let Some(file_name) = path.file_name().and_then(|n| n.to_str()) {
+                // Update the text content
+                **text = format!("Loaded: {file_name}");
+            }
+        } else {
+            **text = "Drag and drop an XYZ file here to visualize".to_string();
+        }
+    }
+}
+
 /// Button that resets the camera to its original position/orientation.
 #[derive(Component)]
 pub(crate) struct ResetCameraButton;
@@ -44,15 +127,75 @@ pub(crate) struct CameraRig {
     initial_scale: Vec3,
 }
 
-// System to set up the 3D scene
-pub(crate) fn setup_scene(
+// System to clear existing atoms when new crystal is loaded
+#[allow(dead_code)]
+pub fn clear_old_atoms(mut commands: Commands, atom_query: Query<Entity, With<AtomEntity>>) {
+    for entity in atom_query.iter() {
+        commands.entity(entity).despawn();
+    }
+}
+
+// System to handle button click to load default structure
+#[allow(clippy::type_complexity)]
+pub(crate) fn handle_load_default_button(
+    mut interaction_query: Query<
+        (&Interaction, &mut BackgroundColor),
+        (Changed<Interaction>, With<LoadDefaultButton>),
+    >,
+    mut commands: Commands,
+    crystal: Option<Res<Crystal>>,
+) {
+    for (interaction, mut color) in &mut interaction_query {
+        match *interaction {
+            Interaction::Pressed => {
+                *color = BackgroundColor(Color::srgb(0.35, 0.35, 0.35));
+                // Load default water molecule
+                if crystal.is_none() {
+                    crate::io::load_default_crystal(commands.reborrow());
+                }
+            }
+            Interaction::Hovered => {
+                *color = BackgroundColor(Color::srgb(0.25, 0.25, 0.25));
+            }
+            Interaction::None => {
+                *color = BackgroundColor(Color::srgb(0.15, 0.15, 0.15));
+            }
+        }
+    }
+}
+
+// System to respawn atoms when crystal changes
+pub(crate) fn update_scene(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
-    crystal: Res<Crystal>,
+    crystal: Option<Res<Crystal>>,
+    atom_query: Query<Entity, With<AtomEntity>>,
+) {
+    if let Some(crystal) = crystal {
+        if crystal.is_changed() {
+            // Clear existing atoms
+            for entity in atom_query.iter() {
+                commands.entity(entity).despawn();
+            }
+
+            // Spawn new atoms
+            spawn_atoms(&mut commands, &mut meshes, &mut materials, &crystal);
+
+            println!("Scene updated with new crystal structure");
+        }
+    }
+}
+
+// Helper function to spawn atoms
+fn spawn_atoms(
+    commands: &mut Commands,
+    meshes: &mut ResMut<Assets<Mesh>>,
+    materials: &mut ResMut<Assets<StandardMaterial>>,
+    crystal: &Crystal,
 ) {
     // Create a sphere mesh for atoms
-    let sphere_mesh = meshes.add(Mesh::from(Sphere { radius: 1.0 }));
+    let sphere_mesh = meshes.add(Sphere::new(1.0));
 
     // Create materials for different elements
     let mut element_materials: HashMap<String, Handle<StandardMaterial>> = HashMap::new();
@@ -75,23 +218,11 @@ pub(crate) fn setup_scene(
         commands.spawn((
             Mesh3d(sphere_mesh.clone()),
             MeshMaterial3d(material),
-            Transform {
-                translation: Vec3::new(atom.x, atom.y, atom.z),
-                scale: Vec3::splat(get_element_size(&atom.element)),
-                ..default()
-            },
+            Transform::from_xyz(atom.x, atom.y, atom.z)
+                .with_scale(Vec3::splat(get_element_size(&atom.element))),
             AtomEntity,
         ));
     }
-
-    // Remove static scene light; lighting will be attached to the camera in setup_camera
-
-    // Add ambient light
-    commands.insert_resource(AmbientLight {
-        color: Color::WHITE,
-        brightness: 0.3,
-        affects_lightmapped_meshes: false,
-    });
 }
 
 // System to set up the camera
@@ -121,17 +252,6 @@ pub fn setup_cameras(mut commands: Commands, windows: Query<&Window>) {
             MainCamera,
         ))
         .with_children(|parent| {
-            // Attach a directional light to the camera so it always points where the camera looks
-            // For directional lights, only rotation matters; translation is ignored
-            parent.spawn((
-                DirectionalLight {
-                    shadows_enabled: true,
-                    ..default()
-                },
-                Transform::default(), // inherit camera rotation; light points along -Z in local space
-            ));
-        })
-        .with_children(|parent| {
             // GIZMO CAMERA
             parent.spawn((
                 Camera3d { ..default() },
@@ -151,19 +271,7 @@ pub fn setup_cameras(mut commands: Commands, windows: Query<&Window>) {
         })
         .id();
 
-    let light_entity = commands
-        .spawn((
-            DirectionalLight {
-                shadows_enabled: true,
-                ..default()
-            },
-            Transform::default(), // inherit camera rotation; light points along -Z in local space
-            ChildOf(camera_entity),
-        ))
-        .id();
-
     commands.insert_resource(MainCameraEntity(camera_entity));
-    commands.insert_resource(MainLightEntity(light_entity));
     commands.insert_resource(CameraRig {
         target: initial_target,
         distance: initial_translation.distance(initial_target),
@@ -172,6 +280,18 @@ pub fn setup_cameras(mut commands: Commands, windows: Query<&Window>) {
         initial_rotation,
         initial_scale,
     });
+}
+
+pub(crate) fn setup_light(mut commands: Commands, camera: Res<MainCameraEntity>) {
+    let light_entity = commands
+        .spawn((
+            DirectionalLight { ..default() },
+            Transform::from_rotation(Quat::from_rotation_x(-std::f32::consts::FRAC_PI_4)),
+            ChildOf(camera.0),
+        ))
+        .id();
+
+    commands.insert_resource(MainLightEntity(light_entity));
 }
 
 // Setup minimal UI with toggle buttons
@@ -204,7 +324,7 @@ pub fn setup_buttons(mut commands: Commands) {
                 ))
                 .with_children(|button| {
                     button.spawn((
-                        Text::new("Light: Detached"),
+                        Text::new("light not follow cam"),
                         TextFont {
                             font: default(),
                             font_size: 12.0,
@@ -297,14 +417,16 @@ pub(crate) fn spawn_axis(
 // System to refresh atoms when Crystal resource changes
 pub fn refresh_atoms_system(
     mut commands: Commands,
-    crystal: Res<Crystal>,
+    crystal: Option<Res<Crystal>>,
     atom_entities: Query<Entity, With<AtomEntity>>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
 ) {
     // Only run when Crystal resource changes
-    if !crystal.is_changed() {
-        return;
+    if let Some(ref crystal) = crystal {
+        if !crystal.is_changed() {
+            return;
+        }
     }
 
     // Despawn all existing atoms
@@ -316,29 +438,31 @@ pub fn refresh_atoms_system(
     let sphere_mesh = meshes.add(Mesh::from(Sphere { radius: 1.0 }));
     let mut element_materials: HashMap<String, Handle<StandardMaterial>> = HashMap::new();
 
-    for atom in &crystal.atoms {
-        // Get or create material for this element
-        let material = element_materials
-            .entry(atom.element.clone())
-            .or_insert_with(|| {
-                materials.add(StandardMaterial {
-                    base_color: get_element_color(&atom.element),
-                    metallic: 0.0,
-                    ..default()
+    if let Some(crystal) = crystal {
+        for atom in &crystal.atoms {
+            // Get or create material for this element
+            let material = element_materials
+                .entry(atom.element.clone())
+                .or_insert_with(|| {
+                    materials.add(StandardMaterial {
+                        base_color: get_element_color(&atom.element),
+                        metallic: 0.0,
+                        ..default()
+                    })
                 })
-            })
-            .clone();
+                .clone();
 
-        commands.spawn((
-            Mesh3d(sphere_mesh.clone()),
-            MeshMaterial3d(material),
-            Transform {
-                translation: Vec3::new(atom.x, atom.y, atom.z),
-                scale: Vec3::splat(get_element_size(&atom.element)),
-                ..default()
-            },
-            AtomEntity,
-        ));
+            commands.spawn((
+                Mesh3d(sphere_mesh.clone()),
+                MeshMaterial3d(material),
+                Transform {
+                    translation: Vec3::new(atom.x, atom.y, atom.z),
+                    scale: Vec3::splat(get_element_size(&atom.element)),
+                    ..default()
+                },
+                AtomEntity,
+            ));
+        }
     }
 }
 
@@ -437,6 +561,7 @@ pub fn toggle_light_attachment(
         ),
         (Changed<Interaction>, With<LightAttachmentButton>),
     >,
+    q_trans: Query<&GlobalTransform>,
     mut texts: Query<&mut Text>,
 ) {
     for (interaction, mut background, mut button_state, children) in &mut interactions {
@@ -444,25 +569,45 @@ pub fn toggle_light_attachment(
             Interaction::Pressed => {
                 *background = BackgroundColor(Color::srgb(0.25, 0.25, 0.25));
 
+                let old_state = button_state.attached;
+                let new_state = !button_state.attached;
+
+                button_state.attached = new_state;
+
+                if old_state {
+                    let light_trans = q_trans
+                        .get(light.0)
+                        .expect("light must have global transform when disattach");
+                    let camera_trans = q_trans
+                        .get(camera.0)
+                        .expect("camera must have global transform");
+                    let local = light_trans.reparented_to(camera_trans);
+                    commands
+                        .entity(light.0)
+                        .insert(local)
+                        .insert(ChildOf(camera.0));
+                    info!("Light attached to camera");
+                } else {
+                    let glb_trans = q_trans
+                        .get(light.0)
+                        .expect("light must have global transform when disattach");
+                    commands
+                        .entity(light.0)
+                        // preserve the world transform when detach
+                        .insert(Transform::from(*glb_trans))
+                        .remove::<ChildOf>();
+                    info!("Light detached from camera");
+                }
+
                 // Update the text inside the button
                 for child in children.iter() {
                     if let Ok(mut text) = texts.get_mut(child) {
-                        text.0 = if button_state.attached {
-                            "Light: Attached".into()
+                        text.0 = if new_state {
+                            "light follow cam".into()
                         } else {
-                            "Light: Detached".into()
+                            "light not follow cam".into()
                         };
                     }
-                }
-
-                button_state.attached = !button_state.attached;
-
-                if button_state.attached {
-                    commands.entity(light.0).insert(ChildOf(camera.0));
-                    info!("Light attached to camera");
-                } else {
-                    commands.entity(light.0).remove::<ChildOf>();
-                    info!("Light detached from camera");
                 }
             }
             Interaction::Hovered => {
