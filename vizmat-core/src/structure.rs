@@ -11,9 +11,35 @@ pub struct Atom {
     pub z: f32,
 }
 
+#[derive(Clone)]
+pub(crate) struct Lattice {
+    a: Vec3,
+    b: Vec3,
+    c: Vec3,
+}
+
+impl Lattice {
+    pub fn new(a: Vec3, b: Vec3, c: Vec3) -> Self {
+        Lattice { a, b, c }
+    }
+
+    pub fn a(&self) -> Vec3 {
+        self.a
+    }
+
+    pub fn b(&self) -> Vec3 {
+        self.b
+    }
+
+    pub fn c(&self) -> Vec3 {
+        self.c
+    }
+}
+
 // Structure to hold our crystal data
 #[derive(Resource, Clone)]
 pub struct Crystal {
+    pub lattice: Lattice,
     pub atoms: Vec<Atom>,
 }
 

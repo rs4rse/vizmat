@@ -3,13 +3,18 @@ use bevy::prelude::*;
 use std::path::PathBuf;
 
 use crate::parse::parse_xyz_content;
-use crate::structure::{Atom, Crystal};
+use crate::structure::{Atom, Crystal, Lattice};
 
 // System to load default crystal data
 pub(crate) fn load_default_crystal(mut commands: Commands) {
     println!("Loading default water molecule structure");
 
     let crystal = Crystal {
+        lattice: Lattice::new(
+            Vec3::new(5., 0., 0.),
+            Vec3::new(0., 5., 0.),
+            Vec3::new(0., 0., 5.),
+        ),
         atoms: vec![
             Atom {
                 element: "O".to_string(),

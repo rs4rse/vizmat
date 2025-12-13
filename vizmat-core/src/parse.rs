@@ -1,5 +1,6 @@
-use crate::structure::{Atom, Crystal};
+use crate::structure::{Atom, Crystal, Lattice};
 use anyhow::{Context, Result};
+use bevy::math::Vec3;
 
 // Function to parse XYZ file format from string content
 pub(crate) fn parse_xyz_content(contents: &str) -> Result<Crystal> {
@@ -43,5 +44,12 @@ pub(crate) fn parse_xyz_content(contents: &str) -> Result<Crystal> {
         atoms.push(atom);
     }
 
-    Ok(Crystal { atoms })
+    // FIXME: use extxyz
+    let lattice = Lattice::new(
+        Vec3::new(5., 0., 0.),
+        Vec3::new(0., 5., 0.),
+        Vec3::new(0., 0., 5.),
+    );
+
+    Ok(Crystal { lattice, atoms })
 }

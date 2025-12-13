@@ -2,9 +2,11 @@
 
 use std::collections::HashMap;
 
+use bevy::asset::RenderAssetUsages;
 use bevy::input::mouse::{MouseMotion, MouseWheel};
 use bevy::prelude::*;
 use bevy::render::camera::Viewport;
+use bevy::render::mesh::{Indices, PrimitiveTopology};
 use bevy::render::view::RenderLayers;
 
 use crate::constants::{get_element_color, get_element_size};
@@ -179,8 +181,9 @@ pub(crate) fn update_scene(
                 commands.entity(entity).despawn();
             }
 
-            // Spawn new atoms
-            spawn_atoms(&mut commands, &mut meshes, &mut materials, &crystal);
+            // Spawn new crystal
+            // FIXME: this is not ideal, because there is always new structure allocated
+            spawn_crystal(&mut commands, &mut meshes, &mut materials, &crystal);
 
             println!("Scene updated with new crystal structure");
         }
@@ -188,12 +191,24 @@ pub(crate) fn update_scene(
 }
 
 // Helper function to spawn atoms
-fn spawn_atoms(
+fn spawn_crystal(
     commands: &mut Commands,
     meshes: &mut ResMut<Assets<Mesh>>,
     materials: &mut ResMut<Assets<StandardMaterial>>,
     crystal: &Crystal,
 ) {
+    // create cell axis
+    let latt = &crystal.lattice; // & to avoid clone
+    let (a, b, c) = (latt.a(), latt.b(), latt.c());
+    let mesh = create_wireframe_mesh(&a, &b, &c);
+    let mesh = meshes.add(mesh);
+    let material = materials.add(StandardMaterial {
+        base_color: Color::WHITE,
+        unlit: true,
+        ..default()
+    });
+    commands.spawn((Mesh3d(mesh), MeshMaterial3d(material), Transform::default()));
+
     // Create a sphere mesh for atoms
     let sphere_mesh = meshes.add(Sphere::new(1.0));
 
@@ -415,7 +430,7 @@ pub(crate) fn spawn_axis(
 }
 
 // System to refresh atoms when Crystal resource changes
-pub fn refresh_atoms_system(
+pub(crate) fn refresh_atoms_system(
     mut commands: Commands,
     crystal: Option<Res<Crystal>>,
     atom_entities: Query<Entity, With<AtomEntity>>,
@@ -548,7 +563,7 @@ pub(crate) fn camera_controls(
 }
 
 #[allow(clippy::type_complexity)]
-pub fn toggle_light_attachment(
+pub(crate) fn toggle_light_attachment(
     mut commands: Commands,
     light: Res<MainLightEntity>,
     camera: Res<MainCameraEntity>,
@@ -622,7 +637,7 @@ pub fn toggle_light_attachment(
 
 // Handle reset button interaction.
 #[allow(clippy::type_complexity)]
-pub fn reset_camera_button_interaction(
+pub(crate) fn reset_camera_button_interaction(
     mut interactions: Query<
         (&Interaction, &mut BackgroundColor),
         (Changed<Interaction>, With<ResetCameraButton>),
@@ -658,4 +673,33 @@ pub fn reset_camera_button_interaction(
             }
         }
     }
+}
+
+// create box frames as the cell
+fn create_wireframe_mesh(a: &Vec3, b: &Vec3, c: &Vec3) -> Mesh {
+    // look at the direction of c
+    let vertices = vec![
+        // bottom
+        [0., 0., 0.],
+        [a.x, a.y, a.z],
+        [a.x + b.x, a.y + b.y, a.z + b.z],
+        [b.x, b.y, b.z],
+        // // top,
+        [c.x, c.y, c.z],
+        [c.x + a.x, c.y + a.y, c.z + a.z],
+        [c.x + a.x + b.x, c.y + a.y + b.y, c.z + a.z + b.z],
+        [c.x + b.x, c.x + b.y, c.z + b.z],
+    ];
+
+    let indices = vec![
+        0, 1, 1, 2, 2, 3, 3, 0, // bottom
+        4, 5, 5, 6, 6, 7, 7, 4, // top
+        0, 4, 1, 5, 2, 6, 3, 7, // sides
+    ];
+
+    let mut mesh = Mesh::new(PrimitiveTopology::LineList, RenderAssetUsages::default());
+    mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, vertices);
+
+    mesh.insert_indices(Indices::U32(indices));
+    mesh
 }
