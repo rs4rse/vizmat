@@ -1,7 +1,7 @@
 // WebSocket client module for connecting to structure update server
 // Supports both native (async-tungstenite) and WASM (web-sys) targets
 
-use crate::structure::{Atom, UpdateStructure};
+use crate::structure::{Site, UpdateStructure};
 use bevy::prelude::*;
 use crossbeam_channel::{unbounded, Receiver, Sender};
 use serde::{Deserialize, Serialize};
@@ -19,9 +19,9 @@ struct StructureMessage {
     atoms: Vec<AtomData>,
 }
 
-impl From<AtomData> for Atom {
+impl From<AtomData> for Site {
     fn from(data: AtomData) -> Self {
-        Atom {
+        Site {
             element: data.element,
             x: data.x,
             y: data.y,
@@ -59,12 +59,9 @@ pub fn poll_websocket_stream(
     stream: Res<WebSocketStream>,
     mut events: EventWriter<UpdateStructure>,
 ) {
-    while let Ok(update) = stream.receiver.try_recv() {
-        info!(
-            "Received structure update with {} atoms",
-            update.atoms.len()
-        );
-        events.write(update);
+    while let Ok(s) = stream.receiver.try_recv() {
+        info!("Received structure update with {} atoms", s.sites.len());
+        events.write(s);
     }
 }
 
@@ -92,13 +89,13 @@ fn setup_native_websocket(tx: Sender<UpdateStructure>) {
                             if let Ok(structure_msg) =
                                 serde_json::from_str::<StructureMessage>(&text)
                             {
-                                let atoms = structure_msg
+                                let sites = structure_msg
                                     .atoms
                                     .into_iter()
                                     .map(std::convert::Into::into)
                                     .collect();
 
-                                if tx.send(UpdateStructure { atoms }).is_err() {
+                                if tx.send(UpdateStructure { sites }).is_err() {
                                     println!("Bevy channel closed");
                                     break;
                                 }

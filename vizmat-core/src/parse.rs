@@ -1,6 +1,8 @@
-use crate::structure::{Atom, Crystal, Lattice};
+use crate::structure::Crystal;
 use anyhow::{Context, Result};
-use bevy::math::Vec3;
+use ccmat_core::{
+    atomic_number_from_symbol, lattice_angstrom, math::Vector3, CrystalBuilder, Site,
+};
 
 // Function to parse XYZ file format from string content
 pub(crate) fn parse_xyz_content(contents: &str) -> Result<Crystal> {
@@ -22,7 +24,7 @@ pub(crate) fn parse_xyz_content(contents: &str) -> Result<Crystal> {
     // Parse extended XYZ properties if present (basic implementation)
     // For now, we'll focus on the basic XYZ format
 
-    let mut atoms = Vec::new();
+    let mut sites = Vec::new();
 
     for (i, line) in lines.iter().skip(2).enumerate() {
         if i >= num_atoms {
@@ -34,22 +36,24 @@ pub(crate) fn parse_xyz_content(contents: &str) -> Result<Crystal> {
             continue; // Skip malformed lines
         }
 
-        let atom = Atom {
-            element: parts[0].to_string(),
-            x: parts[1].parse().context("Failed to parse x coordinate")?,
-            y: parts[2].parse().context("Failed to parse y coordinate")?,
-            z: parts[3].parse().context("Failed to parse z coordinate")?,
-        };
+        let (x, y, z): (f64, f64, f64) = (
+            parts[1].parse().context("Failed to parse x coordinate")?,
+            parts[2].parse().context("Failed to parse y coordinate")?,
+            parts[3].parse().context("Failed to parse z coordinate")?,
+        );
+        let position = Vector3([x.into(), y.into(), z.into()]);
+        let sym = parts[0].to_string();
+        let site = Site::new(position, atomic_number_from_symbol(&sym)?);
 
-        atoms.push(atom);
+        sites.push(site);
     }
 
     // FIXME: use extxyz
-    let lattice = Lattice::new(
-        Vec3::new(5., 0., 0.),
-        Vec3::new(0., 5., 0.),
-        Vec3::new(0., 0., 5.),
-    );
+    let lattice = lattice_angstrom![a = (5., 0., 0.), b = (0., 5., 0.), c = (0., 0., 5.),];
+    let crystal = CrystalBuilder::new()
+        .with_lattice(&lattice)
+        .with_sites(sites)
+        .build()?;
 
-    Ok(Crystal { lattice, atoms })
+    Ok(Crystal { inner: crystal })
 }

@@ -1,45 +1,35 @@
 // io.rs
 use bevy::prelude::*;
+use ccmat_core::{atomic_number, lattice_angstrom, sites_frac_coord, CrystalBuilder};
 use std::path::PathBuf;
 
 use crate::parse::parse_xyz_content;
-use crate::structure::{Atom, Crystal, Lattice};
+use crate::structure::Crystal;
 
 // System to load default crystal data
+#[allow(clippy::unreadable_literal)]
 pub(crate) fn load_default_crystal(mut commands: Commands) {
     println!("Loading default water molecule structure");
 
-    let crystal = Crystal {
-        lattice: Lattice::new(
-            Vec3::new(5., 0., 0.),
-            Vec3::new(0., 5., 0.),
-            Vec3::new(0., 0., 5.),
-        ),
-        atoms: vec![
-            Atom {
-                element: "O".to_string(),
-                x: 0.0,
-                y: 0.0,
-                z: 0.0,
-            },
-            Atom {
-                element: "H".to_string(),
-                x: 0.757,
-                y: 0.587,
-                z: 0.0,
-            },
-            Atom {
-                element: "H".to_string(),
-                x: -0.757,
-                y: 0.587,
-                z: 0.0,
-            },
-        ],
-    };
+    let lattice = lattice_angstrom![
+        a = (-1.61742302102767, 1.61742302102767, 1.61742302102767),
+        b = (1.61742302102767, -1.61742302102767, 1.61742302102767),
+        c = (1.61742302102767, 1.61742302102767, -1.61742302102767),
+    ];
+
+    let sites = sites_frac_coord![
+        (0.0, 0.0, 0.0), atomic_number!(Si);
+    ];
+    let inner = CrystalBuilder::new()
+        .with_lattice(&lattice)
+        .with_sites(sites)
+        .build_uncheck();
+    let crystal = Crystal { inner };
 
     commands.insert_resource(crystal);
 }
 
+// XXX: why need option??
 // Resource to handle file drag and drop
 #[derive(Resource, Default)]
 pub(crate) struct FileDragDrop {
@@ -116,13 +106,21 @@ pub(crate) fn update_crystal_from_file(
     if let Some(crystal) = &file_drag_drop.loaded_crystal {
         // Only update if this is a new crystal
         if let Some(current) = current_crystal {
-            if current.atoms.len() != crystal.atoms.len() {
+            if current.inner.species().len() != crystal.inner.species().len() {
+                // XXX: I really should not clone here!!
                 commands.insert_resource(crystal.clone());
-                println!("Crystal updated with {} atoms", crystal.atoms.len());
+                println!(
+                    "Crystal updated with {} atoms",
+                    crystal.inner.species().len()
+                );
             }
         } else {
+            // XXX: I really should not clone here!!
             commands.insert_resource(crystal.clone());
-            println!("Crystal loaded with {} atoms", crystal.atoms.len());
+            println!(
+                "Crystal loaded with {} atoms",
+                crystal.inner.species().len()
+            );
         }
     }
 }

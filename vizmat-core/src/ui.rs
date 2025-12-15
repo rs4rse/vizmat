@@ -198,7 +198,7 @@ fn spawn_crystal(
     crystal: &Crystal,
 ) {
     // create cell axis
-    let latt = &crystal.lattice; // & to avoid clone
+    let latt = &crystal.lattice(); // & to avoid clone
     let (a, b, c) = (latt.a(), latt.b(), latt.c());
     let mesh = create_wireframe_mesh(&a, &b, &c);
     let mesh = meshes.add(mesh);
@@ -216,13 +216,13 @@ fn spawn_crystal(
     let mut element_materials: HashMap<String, Handle<StandardMaterial>> = HashMap::new();
 
     // Spawn atoms as 3D spheres
-    for atom in &crystal.atoms {
+    for site in &crystal.sites() {
         // Get or create material for this element
         let material = element_materials
-            .entry(atom.element.clone())
+            .entry(site.element.clone())
             .or_insert_with(|| {
                 materials.add(StandardMaterial {
-                    base_color: get_element_color(&atom.element),
+                    base_color: get_element_color(&site.element),
                     metallic: 0.0,
                     ..default()
                 })
@@ -233,8 +233,8 @@ fn spawn_crystal(
         commands.spawn((
             Mesh3d(sphere_mesh.clone()),
             MeshMaterial3d(material),
-            Transform::from_xyz(atom.x, atom.y, atom.z)
-                .with_scale(Vec3::splat(get_element_size(&atom.element))),
+            Transform::from_xyz(site.x, site.y, site.z)
+                .with_scale(Vec3::splat(get_element_size(&site.element))),
             AtomEntity,
         ));
     }
@@ -454,13 +454,13 @@ pub(crate) fn refresh_atoms_system(
     let mut element_materials: HashMap<String, Handle<StandardMaterial>> = HashMap::new();
 
     if let Some(crystal) = crystal {
-        for atom in &crystal.atoms {
+        for (p, e) in crystal.positions().iter().zip(crystal.elements()) {
             // Get or create material for this element
             let material = element_materials
-                .entry(atom.element.clone())
+                .entry(e.clone())
                 .or_insert_with(|| {
                     materials.add(StandardMaterial {
-                        base_color: get_element_color(&atom.element),
+                        base_color: get_element_color(&e),
                         metallic: 0.0,
                         ..default()
                     })
@@ -471,8 +471,8 @@ pub(crate) fn refresh_atoms_system(
                 Mesh3d(sphere_mesh.clone()),
                 MeshMaterial3d(material),
                 Transform {
-                    translation: Vec3::new(atom.x, atom.y, atom.z),
-                    scale: Vec3::splat(get_element_size(&atom.element)),
+                    translation: Vec3::new(p[0], p[1], p[2]),
+                    scale: Vec3::splat(get_element_size(&e)),
                     ..default()
                 },
                 AtomEntity,
