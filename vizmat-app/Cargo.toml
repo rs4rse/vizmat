@@ -1,0 +1,14 @@
+[package]
+name = "vizmat-app"
+version.workspace = true
+readme.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+description.workspace = true
+repository.workspace = true
+homepage.workspace = true
+keywords.workspace = true
+
+[dependencies]
+vizmat-core = { path="../vizmat-core" }

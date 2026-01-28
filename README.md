@@ -36,14 +36,6 @@ sudo apt install build-essential pkg-config libx11-dev libasound2-dev libudev-de
 cargo run
 ```
 
-Nix
-
-```bash
-nix develop
-```
-
-This drops you into a fully configured dev shell (Rust, tools, system deps).
-
 ### macOS
 
 ```bash
@@ -55,15 +47,17 @@ cargo run
 
 ## wasm
 
-To run wasm version, install `trunk` and inside the repo run
+It require rustc target `wasm32-unknown-unknown` installed.
+To run wasm version, install `trunk` and run it inside the binary folder `vizmat-app/`.
 
 ```console
+cd vizmat-app
 trunk serve
 ```
 
-then open the link in your favorite browser. It require rustc target `wasm32-unknown-unknown` installed.
+then open the link in your favorite browser. 
 
-(Bevy use wgpu)
+(Bevy on browser use wgpu)
 
 ## Roadmap
 

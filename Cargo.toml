@@ -1,5 +1,11 @@
-[package]
-name = "vizmat"
+[workspace]
+resolver = "3"
+members = [ 
+    "vizmat-app",
+    "vizmat-core",
+]
+
+[workspace.package]
 version = "0.1.0"
 edition = "2021"
 description = "blob for every crates relate to ccmat utils, and crates."
@@ -9,33 +15,9 @@ repository = "https://github.com/rs4rse/vizmat"
 homepage = "https://github.com/rs4rse/vizmat"
 license = "MIT OR Apache-2.0"
 keywords = ["science", "crystal", "material", "molecule"]
-
-[dependencies]
-bevy = { version = "0.16", features = ["default"] }
-anyhow = "1.0"
-serde = { version = "1.0", features = ["derive"] }
-serde_json = "1.0"
-crossbeam-channel = "0.5"
-
-[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
-async-tungstenite = { version = "0.32.0", features = ["async-std", "async-std-runtime"] }
-futures-util = "0.3"
-
-[target.'cfg(target_arch = "wasm32")'.dependencies]
-bevy = { version = "0.16" }
-wasm-bindgen = "0.2"
-wasm-bindgen-futures = "0.4"
-web-sys = { version = "0.3", features = ["WebSocket", "MessageEvent", "ErrorEvent", "CloseEvent"] }
-js-sys = "0.3"
-
-[features]
-webgpu = ["bevy/webgpu"]
-webgl2 = ["bevy/webgl2"]
-dev-track-location = ["bevy/track_location"]
-
-[lib]
-# need both, cdylib for wasm, rlib for main.rs
-crate-type = ["cdylib", "rlib"]
+exclude = [
+    "misc/*",
+]
 
 # optimize for smaller WASM binary size
 [profile.release]
