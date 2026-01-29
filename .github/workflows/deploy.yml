@@ -27,6 +27,7 @@ jobs:
 
       - name: Build WASM
         run: wasm-pack build --target web
+        working-directory: vizmat-core
 
       - uses: actions/setup-node@v6
         with:
@@ -34,14 +35,14 @@ jobs:
 
       - name: Install npm dependencies and build
         run: |
-          cp ../wasm/* .
+          cp ../../wasm/* .
           npm install
           npm run build
-        working-directory: ./pkg
+        working-directory: vizmat-core/pkg
 
       - name: Deploy to gh-pages
         uses: peaceiris/actions-gh-pages@v4
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
-          publish_dir: ./pkg/dist
+          publish_dir: vizmat-core/pkg/dist
           keep_files: false

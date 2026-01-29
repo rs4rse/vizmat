@@ -3,8 +3,8 @@ import wasm from 'vite-plugin-wasm';
 
 export default defineConfig({
   plugins: [wasm()],
-  base: '/vizmat/',
+  base: '/',
   optimizeDeps: {
-    exclude: ['vizmat']
+    exclude: ['vizmat-core']
   }
 });

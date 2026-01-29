@@ -32,7 +32,9 @@ Install Rust via `rustup`, then required system libraries.
 Ubuntu:
 
 ```bash
-sudo apt install build-essential pkg-config libx11-dev libasound2-dev libudev-dev libxkbcommon-dev mesa-vulkan-drivers vulkan-utils
+sudo apt install build-essential \
+    pkg-config libx11-dev libasound2-dev libudev-dev \
+    libxkbcommon-dev mesa-vulkan-drivers vulkan-utils
 cargo run
 ```
 
