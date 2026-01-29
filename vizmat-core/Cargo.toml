@@ -16,6 +16,7 @@ anyhow = "1.0"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 crossbeam-channel = "0.5"
+ccmat-core = { git = "https://github.com/unkcpz/ccmat.git", branch = "master" }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 async-tungstenite = { version = "0.32.0", features = ["async-std", "async-std-runtime"] }
