@@ -38,8 +38,8 @@ pub(crate) fn load_default_crystal(mut commands: Commands) {
 // Resource to handle file drag and drop
 #[derive(Resource, Default)]
 pub(crate) struct FileDragDrop {
-    dragged_file: Option<PathBuf>,
-    loaded_crystal: Option<Crystal>,
+    pub(crate) dragged_file: Option<PathBuf>,
+    pub(crate) loaded_crystal: Option<Crystal>,
 }
 
 impl FileDragDrop {
@@ -76,6 +76,8 @@ pub(crate) fn handle_file_drag_drop(
     }
 }
 
+// XXX: this only works for non-wasm env
+//
 // System to load crystal from dropped file
 pub(crate) fn load_dropped_file(
     mut file_drag_drop: ResMut<FileDragDrop>,
