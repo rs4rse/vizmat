@@ -19,6 +19,9 @@ pub(crate) struct MainCamera;
 #[derive(Component)]
 pub(crate) struct MoleculeRoot;
 
+#[derive(Component)]
+pub(crate) struct GizmoAxisRoot;
+
 // Component for UI text
 #[derive(Component)]
 pub(crate) struct FileUploadText;
@@ -418,6 +421,7 @@ pub(crate) fn spawn_axis(
             Transform::default(),
             GlobalTransform::default(),
             LAYER_GIZMO,
+            GizmoAxisRoot,
         ))
         .with_children(|p| {
             p.spawn(axis(
@@ -436,6 +440,15 @@ pub(crate) fn spawn_axis(
                 (0., 0., scale * 1. / 2.),
             )); // +Z
         });
+}
+
+pub(crate) fn sync_gizmo_axis_rotation(
+    molecule_query: Query<&Transform, (With<MoleculeRoot>, Changed<Transform>)>,
+    mut gizmo_query: Query<&mut Transform, (With<GizmoAxisRoot>, Without<MoleculeRoot>)>,
+) {
+    if let (Ok(molecule), Ok(mut gizmo)) = (molecule_query.single(), gizmo_query.single_mut()) {
+        gizmo.rotation = molecule.rotation;
+    }
 }
 
 // System to refresh atoms when Crystal resource changes
