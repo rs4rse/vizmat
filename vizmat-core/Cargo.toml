@@ -11,7 +11,42 @@ homepage.workspace = true
 keywords.workspace = true
 
 [dependencies]
-bevy = { version = "0.16", features = ["default"] }
+bevy = { version = "0.16", default-features = false, features = [
+    "std",
+    "async_executor",
+    "animation",
+    "bevy_asset",
+    "bevy_color",
+    "bevy_core_pipeline",
+    "bevy_gilrs",
+    "bevy_gizmos",
+    "bevy_gltf",
+    "bevy_input_focus",
+    "bevy_log",
+    "bevy_mesh_picking_backend",
+    "bevy_pbr",
+    "bevy_picking",
+    "bevy_render",
+    "bevy_scene",
+    "bevy_sprite",
+    "bevy_sprite_picking_backend",
+    "bevy_state",
+    "bevy_text",
+    "bevy_ui",
+    "bevy_ui_picking_backend",
+    "bevy_window",
+    "bevy_winit",
+    "custom_cursor",
+    "default_font",
+    "hdr",
+    "multi_threaded",
+    "png",
+    "smaa_luts",
+    "sysinfo_plugin",
+    "tonemapping_luts",
+    "webgl2",
+    "x11",
+] }
 anyhow = "1.0"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
@@ -25,7 +60,6 @@ async-tungstenite = { version = "0.32.0", features = ["async-std", "async-std-ru
 futures-util = "0.3"
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
-bevy = { version = "0.16" }
 wasm-bindgen = "0.2"
 wasm-bindgen-futures = "0.4"
 web-sys = { version = "0.3", features = ["WebSocket", "MessageEvent", "ErrorEvent", "CloseEvent"] }
@@ -39,4 +73,3 @@ dev-track-location = ["bevy/track_location"]
 [lib]
 # need both, cdylib for wasm, rlib for main.rs
 crate-type = ["cdylib", "rlib"]
-
