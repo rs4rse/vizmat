@@ -478,6 +478,8 @@ pub(crate) fn camera_controls(
     mut camera_query: Query<&mut Transform, (With<MainCamera>, Without<MoleculeRoot>)>,
     mut molecule_query: Query<&mut Transform, (With<MoleculeRoot>, Without<MainCamera>)>,
     mouse_buttons: Res<ButtonInput<MouseButton>>,
+    keyboard: Res<ButtonInput<KeyCode>>,
+    time: Res<Time>,
     mut mouse_motion_events: EventReader<MouseMotion>,
     mut mouse_wheel_events: EventReader<MouseWheel>,
     mut camera_rig: ResMut<CameraRig>,
@@ -509,6 +511,19 @@ pub(crate) fn camera_controls(
             };
             molecule_transform.rotation = yaw_rotation * pitch_rotation * molecule_transform.rotation;
         }
+        if keyboard.pressed(KeyCode::KeyQ) || keyboard.pressed(KeyCode::KeyE) {
+            let mut yaw = 0.0;
+            if keyboard.pressed(KeyCode::KeyQ) {
+                yaw += 1.0;
+            }
+            if keyboard.pressed(KeyCode::KeyE) {
+                yaw -= 1.0;
+            }
+            let rotate_speed = 1.8;
+            molecule_transform.rotation =
+                Quat::from_rotation_y(yaw * rotate_speed * time.delta_secs())
+                    * molecule_transform.rotation;
+        }
 
         if mouse_buttons.pressed(MouseButton::Right) {
             pan_request = mouse_delta;
@@ -524,13 +539,34 @@ pub(crate) fn camera_controls(
             offset = Vec3::new(0.0, 0.0, camera_rig.distance.max(1.0));
         }
 
+        // FPS-style keyboard movement of the camera perspective.
+        let distance = offset.length().max(MIN_DISTANCE);
+        let forward = (-offset).normalize_or_zero();
+        let mut right = forward.cross(Vec3::Y).normalize_or_zero();
+        if right.length_squared() < f32::EPSILON {
+            right = Vec3::X;
+        }
+        let mut move_dir = Vec3::ZERO;
+        if keyboard.pressed(KeyCode::KeyW) {
+            move_dir += forward;
+        }
+        if keyboard.pressed(KeyCode::KeyS) {
+            move_dir -= forward;
+        }
+        if keyboard.pressed(KeyCode::KeyD) {
+            move_dir += right;
+        }
+        if keyboard.pressed(KeyCode::KeyA) {
+            move_dir -= right;
+        }
+        if move_dir.length_squared() > 0.0 {
+            let sprint = keyboard.pressed(KeyCode::ShiftLeft) || keyboard.pressed(KeyCode::ShiftRight);
+            let move_speed = if sprint { 3.6 } else { 1.8 };
+            let step = move_dir.normalize() * move_speed * time.delta_secs();
+            camera_rig.target += step;
+        }
+
         if pan_request != Vec2::ZERO {
-            let distance = offset.length().max(MIN_DISTANCE);
-            let forward = (-offset).normalize_or_zero();
-            let mut right = forward.cross(Vec3::Y).normalize_or_zero();
-            if right.length_squared() < f32::EPSILON {
-                right = Vec3::X;
-            }
             let up = right.cross(forward).normalize_or_zero();
             let pan_speed = 0.002 * distance;
             let pan_offset = (-pan_request.x * right + pan_request.y * up) * pan_speed;
