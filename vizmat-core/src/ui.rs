@@ -16,6 +16,9 @@ const LAYER_CANVAS: RenderLayers = RenderLayers::layer(0);
 #[derive(Component)]
 pub(crate) struct MainCamera;
 
+#[derive(Component)]
+pub(crate) struct MoleculeRoot;
+
 // Component for UI text
 #[derive(Component)]
 pub(crate) struct FileUploadText;
@@ -171,6 +174,7 @@ pub(crate) fn update_scene(
     mut materials: ResMut<Assets<StandardMaterial>>,
     crystal: Option<Res<Crystal>>,
     atom_query: Query<Entity, With<AtomEntity>>,
+    molecule_root: Query<Entity, With<MoleculeRoot>>,
 ) {
     if let Some(crystal) = crystal {
         if crystal.is_changed() {
@@ -180,7 +184,15 @@ pub(crate) fn update_scene(
             }
 
             // Spawn new atoms
-            spawn_atoms(&mut commands, &mut meshes, &mut materials, &crystal);
+            if let Ok(root_entity) = molecule_root.single() {
+                spawn_atoms(
+                    &mut commands,
+                    &mut meshes,
+                    &mut materials,
+                    &crystal,
+                    root_entity,
+                );
+            }
 
             println!("Scene updated with new crystal structure");
         }
@@ -193,6 +205,7 @@ fn spawn_atoms(
     meshes: &mut ResMut<Assets<Mesh>>,
     materials: &mut ResMut<Assets<StandardMaterial>>,
     crystal: &Crystal,
+    root_entity: Entity,
 ) {
     // Create a sphere mesh for atoms
     let sphere_mesh = meshes.add(Sphere::new(1.0));
@@ -200,29 +213,31 @@ fn spawn_atoms(
     // Create materials for different elements
     let mut element_materials: HashMap<String, Handle<StandardMaterial>> = HashMap::new();
 
-    // Spawn atoms as 3D spheres
-    for atom in &crystal.atoms {
-        // Get or create material for this element
-        let material = element_materials
-            .entry(atom.element.clone())
-            .or_insert_with(|| {
-                materials.add(StandardMaterial {
-                    base_color: get_element_color(&atom.element),
-                    metallic: 0.0,
-                    ..default()
+    commands.entity(root_entity).with_children(|parent| {
+        // Spawn atoms as 3D spheres
+        for atom in &crystal.atoms {
+            // Get or create material for this element
+            let material = element_materials
+                .entry(atom.element.clone())
+                .or_insert_with(|| {
+                    materials.add(StandardMaterial {
+                        base_color: get_element_color(&atom.element),
+                        metallic: 0.0,
+                        ..default()
+                    })
                 })
-            })
-            .clone();
+                .clone();
 
-        // Spawn the atom as a sphere
-        commands.spawn((
-            Mesh3d(sphere_mesh.clone()),
-            MeshMaterial3d(material),
-            Transform::from_xyz(atom.x, atom.y, atom.z)
-                .with_scale(Vec3::splat(get_element_size(&atom.element))),
-            AtomEntity,
-        ));
-    }
+            // Spawn the atom as a sphere
+            parent.spawn((
+                Mesh3d(sphere_mesh.clone()),
+                MeshMaterial3d(material),
+                Transform::from_xyz(atom.x, atom.y, atom.z)
+                    .with_scale(Vec3::splat(get_element_size(&atom.element))),
+                AtomEntity,
+            ));
+        }
+    });
 }
 
 // System to set up the camera
@@ -237,6 +252,15 @@ pub fn setup_cameras(mut commands: Commands, windows: Query<&Window>) {
     let initial_rotation = camera_transform.rotation;
     let initial_scale = camera_transform.scale;
     let initial_target = Vec3::ZERO;
+
+    commands.spawn((
+        Transform::default(),
+        GlobalTransform::default(),
+        Visibility::default(),
+        InheritedVisibility::default(),
+        ViewVisibility::default(),
+        MoleculeRoot,
+    ));
 
     // Spawn cameras
     let camera_entity = commands
@@ -421,6 +445,7 @@ pub fn refresh_atoms_system(
     atom_entities: Query<Entity, With<AtomEntity>>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
+    molecule_root: Query<Entity, With<MoleculeRoot>>,
 ) {
     // Only run when Crystal resource changes
     if let Some(ref crystal) = crystal {
@@ -434,34 +459,15 @@ pub fn refresh_atoms_system(
         commands.entity(entity).despawn();
     }
 
-    // Respawn with new positions
-    let sphere_mesh = meshes.add(Mesh::from(Sphere { radius: 1.0 }));
-    let mut element_materials: HashMap<String, Handle<StandardMaterial>> = HashMap::new();
-
     if let Some(crystal) = crystal {
-        for atom in &crystal.atoms {
-            // Get or create material for this element
-            let material = element_materials
-                .entry(atom.element.clone())
-                .or_insert_with(|| {
-                    materials.add(StandardMaterial {
-                        base_color: get_element_color(&atom.element),
-                        metallic: 0.0,
-                        ..default()
-                    })
-                })
-                .clone();
-
-            commands.spawn((
-                Mesh3d(sphere_mesh.clone()),
-                MeshMaterial3d(material),
-                Transform {
-                    translation: Vec3::new(atom.x, atom.y, atom.z),
-                    scale: Vec3::splat(get_element_size(&atom.element)),
-                    ..default()
-                },
-                AtomEntity,
-            ));
+        if let Ok(root_entity) = molecule_root.single() {
+            spawn_atoms(
+                &mut commands,
+                &mut meshes,
+                &mut materials,
+                &crystal,
+                root_entity,
+            );
         }
     }
 }
@@ -469,15 +475,16 @@ pub fn refresh_atoms_system(
 // Simple camera controls
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn camera_controls(
-    mut camera_query: Query<&mut Transform, With<MainCamera>>,
+    mut camera_query: Query<&mut Transform, (With<MainCamera>, Without<MoleculeRoot>)>,
+    mut molecule_query: Query<&mut Transform, (With<MoleculeRoot>, Without<MainCamera>)>,
     mouse_buttons: Res<ButtonInput<MouseButton>>,
     mut mouse_motion_events: EventReader<MouseMotion>,
     mut mouse_wheel_events: EventReader<MouseWheel>,
     mut camera_rig: ResMut<CameraRig>,
 ) {
-    if let Ok(mut transform) = camera_query.single_mut() {
-        let mut yaw_delta = 0.0;
-        let mut pitch_delta = 0.0;
+    if let (Ok(mut transform), Ok(mut molecule_transform)) =
+        (camera_query.single_mut(), molecule_query.single_mut())
+    {
         let mut zoom_change = 0.0;
         let mut pan_request = Vec2::ZERO;
 
@@ -491,8 +498,16 @@ pub(crate) fn camera_controls(
 
         if mouse_buttons.pressed(MouseButton::Left) {
             let sensitivity = 0.005;
-            yaw_delta -= mouse_delta.x * sensitivity;
-            pitch_delta -= mouse_delta.y * sensitivity;
+            let yaw_delta = -mouse_delta.x * sensitivity;
+            let pitch_delta = -mouse_delta.y * sensitivity;
+            let yaw_rotation = Quat::from_rotation_y(yaw_delta);
+            let right_axis = transform.right().normalize_or_zero();
+            let pitch_rotation = if right_axis.length_squared() > 0.0 {
+                Quat::from_axis_angle(right_axis, pitch_delta)
+            } else {
+                Quat::IDENTITY
+            };
+            molecule_transform.rotation = yaw_rotation * pitch_rotation * molecule_transform.rotation;
         }
 
         if mouse_buttons.pressed(MouseButton::Right) {
@@ -500,18 +515,13 @@ pub(crate) fn camera_controls(
         }
 
         for wheel in mouse_wheel_events.read() {
-            zoom_change -= wheel.y * 0.2;
+            zoom_change -= wheel.y * 0.002;
         }
 
         // Keep camera offset updated relative to target.
         let mut offset = transform.translation - camera_rig.target;
         if offset.length_squared() < f32::EPSILON {
             offset = Vec3::new(0.0, 0.0, camera_rig.distance.max(1.0));
-        }
-
-        if yaw_delta != 0.0 || pitch_delta != 0.0 {
-            let rotation = Quat::from_euler(EulerRot::XYZ, pitch_delta, yaw_delta, 0.0);
-            offset = rotation * offset;
         }
 
         if pan_request != Vec2::ZERO {
@@ -628,8 +638,9 @@ pub fn reset_camera_button_interaction(
         (Changed<Interaction>, With<ResetCameraButton>),
     >,
     camera_entity: Option<Res<MainCameraEntity>>,
-    mut camera_query: Query<&mut Transform, With<Camera3d>>,
+    mut camera_query: Query<&mut Transform, (With<Camera3d>, Without<MoleculeRoot>)>,
     mut camera_rig: Option<ResMut<CameraRig>>,
+    mut molecule_query: Query<&mut Transform, (With<MoleculeRoot>, Without<Camera3d>)>,
 ) {
     for (interaction, mut background) in &mut interactions {
         match *interaction {
@@ -648,6 +659,9 @@ pub fn reset_camera_button_interaction(
                             .length()
                             .max(0.5);
                     }
+                }
+                if let Ok(mut molecule_transform) = molecule_query.single_mut() {
+                    molecule_transform.rotation = Quat::IDENTITY;
                 }
             }
             Interaction::Hovered => {
