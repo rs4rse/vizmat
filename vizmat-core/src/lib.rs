@@ -24,7 +24,7 @@ use crate::structure::{update_crystal_system, UpdateStructure};
 use crate::ui::{
     camera_controls, handle_load_default_button, refresh_atoms_system,
     reset_camera_button_interaction, setup_cameras, setup_file_ui, setup_light,
-    toggle_light_attachment, update_file_ui, update_scene,
+    sync_gizmo_axis_rotation, toggle_light_attachment, update_file_ui, update_scene,
 };
 use crate::ui::{setup_buttons, spawn_axis};
 
@@ -278,6 +278,7 @@ pub fn run_app() {
                 reset_camera_button_interaction,
                 handle_load_default_button,
                 camera_controls,
+                sync_gizmo_axis_rotation,
                 update_scene,
             ),
         )

@@ -61,6 +61,10 @@ then open the link in your favorite browser.
 
 (Bevy on browser use wgpu)
 
+## Controls
+
+Doom-like: `W/A/S/D` move perspective, `Shift` sprint, `Q/E` rotate molecule left/right, mouse drag rotates.
+
 ## Roadmap
 
 * [x] Initial Bevy setup
@@ -80,4 +84,3 @@ All contributions must retain this attribution.
 
 - Apache License, Version 2.0 ([LICENSE-APACHE](LICENSE-APACHE) or http://www.apache.org/licenses/LICENSE-2.0)
 - MIT license ([LICENSE-MIT](LICENSE-MIT) or http://opensource.org/licenses/MIT)
-
