@@ -522,7 +522,8 @@ pub(crate) fn camera_controls(
             } else {
                 Quat::IDENTITY
             };
-            molecule_transform.rotation = yaw_rotation * pitch_rotation * molecule_transform.rotation;
+            molecule_transform.rotation =
+                yaw_rotation * pitch_rotation * molecule_transform.rotation;
         }
         if keyboard.pressed(KeyCode::KeyQ) || keyboard.pressed(KeyCode::KeyE) {
             let mut yaw = 0.0;
@@ -573,7 +574,8 @@ pub(crate) fn camera_controls(
             move_dir -= right;
         }
         if move_dir.length_squared() > 0.0 {
-            let sprint = keyboard.pressed(KeyCode::ShiftLeft) || keyboard.pressed(KeyCode::ShiftRight);
+            let sprint =
+                keyboard.pressed(KeyCode::ShiftLeft) || keyboard.pressed(KeyCode::ShiftRight);
             let move_speed = if sprint { 3.6 } else { 1.8 };
             let step = move_dir.normalize() * move_speed * time.delta_secs();
             camera_rig.target += step;
