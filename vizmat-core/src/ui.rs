@@ -7,6 +7,7 @@ use bevy::input::mouse::{MouseMotion, MouseWheel};
 use bevy::prelude::*;
 use bevy::render::camera::Viewport;
 use bevy::render::view::RenderLayers;
+use bevy::ui::RelativeCursorPosition;
 
 use crate::constants::{get_element_color, get_element_size};
 use crate::structure::{infer_bonds_grid, AtomEntity, BondEntity, BondInferenceSettings, Crystal};
@@ -58,13 +59,19 @@ pub(crate) struct HudButtonLabel;
 pub(crate) struct HudHelpText;
 
 #[derive(Component)]
-pub(crate) struct BondToleranceDecreaseButton;
-
-#[derive(Component)]
-pub(crate) struct BondToleranceIncreaseButton;
+pub(crate) struct BondToleranceSliderTrack;
 
 #[derive(Component)]
 pub(crate) struct BondToleranceText;
+
+#[derive(Component)]
+pub(crate) struct BondToggleButton;
+
+#[derive(Component)]
+pub(crate) struct BondToggleLabel;
+
+#[derive(Component)]
+pub(crate) struct BondToleranceFill;
 
 #[derive(Resource, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ThemeMode {
@@ -297,66 +304,65 @@ pub(crate) fn setup_file_ui(mut commands: Commands, asset_server: Res<AssetServe
                 row.spawn((
                     Button,
                     Node {
-                        width: Val::Px(24.0),
-                        height: Val::Px(24.0),
-                        justify_content: JustifyContent::Center,
-                        align_items: AlignItems::Center,
+                        padding: UiRect::axes(Val::Px(10.0), Val::Px(6.0)),
                         border: UiRect::all(Val::Px(1.0)),
                         ..default()
                     },
                     BorderColor(p.border),
                     BackgroundColor(p.button_bg),
-                    BondToleranceDecreaseButton,
+                    BondToggleButton,
                     HudButton,
                 ))
                 .with_children(|button| {
                     button.spawn((
-                        Text::new("-"),
+                        Text::new("Bonds: On"),
                         TextFont {
-                            font_size: 14.0,
+                            font_size: 12.0,
                             ..default()
                         },
                         TextColor(p.text),
                         HudButtonLabel,
+                        BondToggleLabel,
                     ));
                 });
 
                 row.spawn((
-                    Text::new("Bonds 1.15"),
+                    Button,
+                    Node {
+                        width: Val::Px(120.0),
+                        height: Val::Px(12.0),
+                        border: UiRect::all(Val::Px(1.0)),
+                        justify_content: JustifyContent::FlexStart,
+                        align_items: AlignItems::Stretch,
+                        ..default()
+                    },
+                    BorderColor(p.border),
+                    BackgroundColor(Color::srgba(0.5, 0.5, 0.5, 0.15)),
+                    RelativeCursorPosition::default(),
+                    BondToleranceSliderTrack,
+                ))
+                .with_children(|track| {
+                    track.spawn((
+                        Node {
+                            width: Val::Percent(25.0),
+                            height: Val::Percent(100.0),
+                            ..default()
+                        },
+                        BackgroundColor(p.text_muted),
+                        BondToleranceFill,
+                    ));
+                });
+
+                row.spawn((
+                    Text::new("1.15"),
                     TextFont {
                         font_size: 12.0,
                         ..default()
                     },
                     TextColor(p.text),
+                    HudButtonLabel,
                     BondToleranceText,
                 ));
-
-                row.spawn((
-                    Button,
-                    Node {
-                        width: Val::Px(24.0),
-                        height: Val::Px(24.0),
-                        justify_content: JustifyContent::Center,
-                        align_items: AlignItems::Center,
-                        border: UiRect::all(Val::Px(1.0)),
-                        ..default()
-                    },
-                    BorderColor(p.border),
-                    BackgroundColor(p.button_bg),
-                    BondToleranceIncreaseButton,
-                    HudButton,
-                ))
-                .with_children(|button| {
-                    button.spawn((
-                        Text::new("+"),
-                        TextFont {
-                            font_size: 14.0,
-                            ..default()
-                        },
-                        TextColor(p.text),
-                        HudButtonLabel,
-                    ));
-                });
             });
 
             top.spawn((
@@ -462,22 +468,30 @@ pub(crate) fn update_file_ui(
 #[allow(clippy::type_complexity)]
 pub(crate) fn bond_tolerance_controls(
     mut settings: ResMut<BondInferenceSettings>,
-    mut decrease_query: Query<
-        (&Interaction, &mut BackgroundColor),
-        (Changed<Interaction>, With<BondToleranceDecreaseButton>),
-    >,
-    mut increase_query: Query<
-        (&Interaction, &mut BackgroundColor),
-        (Changed<Interaction>, With<BondToleranceIncreaseButton>),
-    >,
-    mut text_query: Query<&mut Text, With<BondToleranceText>>,
+    mut interaction_queries: ParamSet<(
+        Query<(&Interaction, &mut BackgroundColor), (Changed<Interaction>, With<BondToggleButton>)>,
+        Query<(&Interaction, &RelativeCursorPosition), With<BondToleranceSliderTrack>>,
+    )>,
+    mut text_queries: ParamSet<(
+        Query<&mut Text, With<BondToleranceText>>,
+        Query<&mut Text, With<BondToggleLabel>>,
+    )>,
+    mut fill_query: Query<&mut Node, With<BondToleranceFill>>,
     theme: Res<UiTheme>,
 ) {
+    const MIN_TOLERANCE: f32 = 1.00;
+    const MAX_TOLERANCE: f32 = 1.60;
+    const STEP: f32 = 0.02;
+
+    let slider_percent = |v: f32| ((v - MIN_TOLERANCE) / (MAX_TOLERANCE - MIN_TOLERANCE)) * 100.0;
+    let value_from_slider =
+        |x_norm: f32| MIN_TOLERANCE + x_norm.clamp(0.0, 1.0) * (MAX_TOLERANCE - MIN_TOLERANCE);
+
     let mut changed = false;
-    for (interaction, mut color) in &mut decrease_query {
+    for (interaction, mut color) in &mut interaction_queries.p0() {
         match *interaction {
             Interaction::Pressed => {
-                settings.tolerance_scale = (settings.tolerance_scale - 0.02).clamp(1.00, 1.35);
+                settings.enabled = !settings.enabled;
                 *color = BackgroundColor(themed_button_bg(theme.mode, Interaction::Pressed));
                 changed = true;
             }
@@ -489,24 +503,34 @@ pub(crate) fn bond_tolerance_controls(
             }
         }
     }
-    for (interaction, mut color) in &mut increase_query {
-        match *interaction {
-            Interaction::Pressed => {
-                settings.tolerance_scale = (settings.tolerance_scale + 0.02).clamp(1.00, 1.35);
-                *color = BackgroundColor(themed_button_bg(theme.mode, Interaction::Pressed));
-                changed = true;
-            }
-            Interaction::Hovered => {
-                *color = BackgroundColor(themed_button_bg(theme.mode, Interaction::Hovered));
-            }
-            Interaction::None => {
-                *color = BackgroundColor(themed_button_bg(theme.mode, Interaction::None));
+
+    for (interaction, cursor) in &interaction_queries.p1() {
+        if *interaction == Interaction::Pressed {
+            if let Some(pos) = cursor.normalized {
+                let raw = value_from_slider(pos.x);
+                let snapped = (raw / STEP).round() * STEP;
+                let snapped = snapped.clamp(MIN_TOLERANCE, MAX_TOLERANCE);
+                if (snapped - settings.tolerance_scale).abs() > f32::EPSILON {
+                    settings.tolerance_scale = snapped;
+                    changed = true;
+                }
             }
         }
     }
+
     if changed {
-        if let Ok(mut text) = text_query.single_mut() {
-            text.0 = format!("Bonds {:.2}", settings.tolerance_scale);
+        if let Ok(mut text) = text_queries.p0().single_mut() {
+            text.0 = format!("{:.2}", settings.tolerance_scale);
+        }
+        if let Ok(mut text) = text_queries.p1().single_mut() {
+            text.0 = if settings.enabled {
+                "Bonds: On".into()
+            } else {
+                "Bonds: Off".into()
+            };
+        }
+        if let Ok(mut fill) = fill_query.single_mut() {
+            fill.width = Val::Percent(slider_percent(settings.tolerance_scale));
         }
     }
 }
@@ -769,7 +793,11 @@ fn spawn_atoms(
         perceptual_roughness: 0.8,
         ..default()
     });
-    let bonds = infer_bonds_grid(crystal, bond_settings.tolerance_scale);
+    let bonds = if bond_settings.enabled {
+        infer_bonds_grid(crystal, bond_settings.tolerance_scale)
+    } else {
+        Vec::new()
+    };
 
     commands.entity(root_entity).with_children(|parent| {
         for bond in &bonds {

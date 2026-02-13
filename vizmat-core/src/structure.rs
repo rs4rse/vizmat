@@ -22,12 +22,14 @@ pub struct Crystal {
 
 #[derive(Resource, Clone, Copy)]
 pub struct BondInferenceSettings {
+    pub enabled: bool,
     pub tolerance_scale: f32,
 }
 
 impl Default for BondInferenceSettings {
     fn default() -> Self {
         Self {
+            enabled: true,
             tolerance_scale: 1.15,
         }
     }
