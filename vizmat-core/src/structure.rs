@@ -23,7 +23,11 @@ pub struct Crystal {
 #[derive(Resource, Clone, Copy)]
 pub struct BondInferenceSettings {
     pub enabled: bool,
+    // Applied value used by bond generation.
     pub tolerance_scale: f32,
+    // Live slider value shown in the UI.
+    pub ui_tolerance_scale: f32,
+    pub last_ui_change_secs: f64,
 }
 
 impl Default for BondInferenceSettings {
@@ -31,6 +35,8 @@ impl Default for BondInferenceSettings {
         Self {
             enabled: true,
             tolerance_scale: 1.15,
+            ui_tolerance_scale: 1.15,
+            last_ui_change_secs: 0.0,
         }
     }
 }
