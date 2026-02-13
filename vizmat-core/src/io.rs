@@ -81,16 +81,19 @@ pub(crate) fn handle_file_drag_drop(
 // System to load crystal from dropped file
 pub(crate) fn load_dropped_file(
     mut file_drag_drop: ResMut<FileDragDrop>,
-    mut crystal_loaded: Local<bool>,
+    mut last_loaded_path: Local<Option<PathBuf>>,
 ) {
-    if let Some(ref path) = file_drag_drop.dragged_file {
-        if !*crystal_loaded {
-            match std::fs::read_to_string(path) {
+    if let Some(path) = file_drag_drop.dragged_file.clone() {
+        if last_loaded_path
+            .as_ref()
+            .is_none_or(|loaded_path| loaded_path != &path)
+        {
+            match std::fs::read_to_string(&path) {
                 Ok(contents) => match parse_xyz_content(&contents) {
                     Ok(crystal) => {
                         println!("Successfully loaded crystal from: {:?}", path);
                         file_drag_drop.loaded_crystal = Some(crystal);
-                        *crystal_loaded = true;
+                        *last_loaded_path = Some(path);
                     }
                     Err(e) => {
                         eprintln!("Failed to parse XYZ file: {}", e);
