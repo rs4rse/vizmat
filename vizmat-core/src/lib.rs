@@ -276,14 +276,15 @@ pub fn run_app() {
                 update_file_ui,
                 refresh_atoms_system,
                 toggle_light_attachment,
-                reset_camera_button_interaction,
-                handle_load_default_button,
-                toggle_theme_button,
-                apply_theme_to_hud,
-                camera_controls,
-                sync_gizmo_axis_rotation,
-                update_scene,
             ),
+        )
+        .add_systems(Update, reset_camera_button_interaction)
+        .add_systems(Update, handle_load_default_button)
+        .add_systems(Update, toggle_theme_button)
+        .add_systems(Update, apply_theme_to_hud)
+        .add_systems(
+            Update,
+            (camera_controls, sync_gizmo_axis_rotation, update_scene),
         )
         .add_observer(web_event_observer)
         .run();

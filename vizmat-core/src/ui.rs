@@ -2,6 +2,7 @@
 
 use std::collections::HashMap;
 
+use bevy::ecs::system::SystemParam;
 use bevy::input::mouse::{MouseMotion, MouseWheel};
 use bevy::prelude::*;
 use bevy::render::camera::Viewport;
@@ -118,6 +119,37 @@ fn themed_button_bg(mode: ThemeMode, interaction: Interaction) -> Color {
         Interaction::None => p.button_bg,
     }
 }
+
+#[derive(SystemParam)]
+pub(crate) struct HudThemeParams<'w, 's> {
+    top_bar_bg: Query<'w, 's, &'static mut BackgroundColor, With<HudTopBar>>,
+    bottom_bar_bg: Query<'w, 's, &'static mut BackgroundColor, With<HudBottomBar>>,
+    button_bg: Query<
+        'w,
+        's,
+        (
+            &'static Interaction,
+            &'static mut BackgroundColor,
+            &'static mut BorderColor,
+        ),
+        With<HudButton>,
+    >,
+    button_label_text: Query<'w, 's, &'static mut TextColor, With<HudButtonLabel>>,
+    upload_text:
+        Query<'w, 's, &'static mut TextColor, (With<FileUploadText>, Without<HudButtonLabel>)>,
+    help_text: Query<'w, 's, &'static mut TextColor, With<HudHelpText>>,
+}
+
+type ThemeToggleInteractionQuery<'w, 's> = Query<
+    'w,
+    's,
+    (
+        &'static Interaction,
+        &'static mut BackgroundColor,
+        &'static Children,
+    ),
+    (Changed<Interaction>, With<ThemeToggleButton>),
+>;
 
 // System to set up file upload UI
 pub(crate) fn setup_file_ui(mut commands: Commands, asset_server: Res<AssetServer>) {
@@ -328,13 +360,9 @@ pub(crate) fn update_file_ui(
     }
 }
 
-#[allow(clippy::type_complexity)]
 pub(crate) fn toggle_theme_button(
     mut theme: ResMut<UiTheme>,
-    mut interaction_query: Query<
-        (&Interaction, &mut BackgroundColor, &Children),
-        (Changed<Interaction>, With<ThemeToggleButton>),
-    >,
+    mut interaction_query: ThemeToggleInteractionQuery<'_, '_>,
     mut texts: Query<&mut Text, With<ThemeToggleIcon>>,
 ) {
     for (interaction, mut color, children) in &mut interaction_query {
@@ -367,39 +395,30 @@ pub(crate) fn toggle_theme_button(
 pub(crate) fn apply_theme_to_hud(
     theme: Res<UiTheme>,
     mut clear_color: ResMut<ClearColor>,
-    mut themed_bg_queries: ParamSet<(
-        Query<&mut BackgroundColor, With<HudTopBar>>,
-        Query<&mut BackgroundColor, With<HudBottomBar>>,
-        Query<(&Interaction, &mut BackgroundColor, &mut BorderColor), With<HudButton>>,
-    )>,
-    mut themed_text_queries: ParamSet<(
-        Query<&mut TextColor, With<HudButtonLabel>>,
-        Query<&mut TextColor, (With<FileUploadText>, Without<HudButtonLabel>)>,
-        Query<&mut TextColor, With<HudHelpText>>,
-    )>,
+    mut themed: HudThemeParams<'_, '_>,
 ) {
     if !theme.is_changed() {
         return;
     }
     let p = theme_palette(theme.mode);
     clear_color.0 = p.scene_bg;
-    for mut bg in &mut themed_bg_queries.p0() {
+    for mut bg in &mut themed.top_bar_bg {
         *bg = BackgroundColor(p.bar_bg);
     }
-    for mut bg in &mut themed_bg_queries.p1() {
+    for mut bg in &mut themed.bottom_bar_bg {
         *bg = BackgroundColor(p.bar_bg_alt);
     }
-    for (interaction, mut bg, mut border) in &mut themed_bg_queries.p2() {
+    for (interaction, mut bg, mut border) in &mut themed.button_bg {
         *bg = BackgroundColor(themed_button_bg(theme.mode, *interaction));
         *border = BorderColor(p.border);
     }
-    for mut color in &mut themed_text_queries.p0() {
+    for mut color in &mut themed.button_label_text {
         *color = TextColor(p.text);
     }
-    if let Ok(mut color) = themed_text_queries.p1().single_mut() {
+    if let Ok(mut color) = themed.upload_text.single_mut() {
         *color = TextColor(p.text);
     }
-    for mut color in &mut themed_text_queries.p2() {
+    for mut color in &mut themed.help_text {
         *color = TextColor(p.text_muted);
     }
 }
