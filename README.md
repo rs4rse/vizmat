@@ -23,6 +23,7 @@ Contributions are welcome. This project uses Rust and Bevy. Familiarity with Rus
 
 ```powershell
 cargo run
+cargo run --release
 ```
 
 ### Linux
@@ -36,6 +37,7 @@ sudo apt install build-essential \
     pkg-config libx11-dev libasound2-dev libudev-dev \
     libxkbcommon-dev mesa-vulkan-drivers vulkan-utils
 cargo run
+cargo run --release
 ```
 
 ### macOS
@@ -43,6 +45,7 @@ cargo run
 ```bash
 brew install cmake pkg-config
 cargo run
+cargo run --release
 ```
 
 (Bevy uses Metal; no Vulkan needed.)
@@ -63,7 +66,15 @@ then open the link in your favorite browser.
 
 ## Controls
 
-Doom-like: `W/A/S/D` move perspective, `Shift` sprint, `Q/E` rotate molecule left/right, mouse drag rotates.
+Doom-like: `W/A/S/D` move perspective, `Shift` sprint, `Q/E` rotate view left/right, mouse drag rotates.
+
+## Sample Proteins
+
+Create a larger test structure (SARS-CoV-2 spike):
+
+```bash
+just protein-6vxx
+```
 
 ## Roadmap
 
