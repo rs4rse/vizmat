@@ -23,6 +23,9 @@ pub(crate) struct MoleculeRoot;
 #[derive(Component)]
 pub(crate) struct GizmoAxisRoot;
 
+#[derive(Component)]
+pub(crate) struct GizmoCamera;
+
 // Component for UI text
 #[derive(Component)]
 pub(crate) struct FileUploadText;
@@ -695,6 +698,7 @@ pub fn setup_cameras(mut commands: Commands, windows: Query<&Window>) {
                 Transform::default(),
                 GlobalTransform::default(),
                 LAYER_GIZMO,
+                GizmoCamera,
             ));
         })
         .id();
@@ -732,6 +736,7 @@ pub(crate) fn spawn_axis(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
+    gizmo_camera: Query<Entity, With<GizmoCamera>>,
 ) {
     let mut axis = |color: Color,
                     (x, y, z): (f32, f32, f32),
@@ -757,29 +762,42 @@ pub(crate) fn spawn_axis(
     };
 
     let scale = 2.0;
+    let Ok(gizmo_camera_entity) = gizmo_camera.single() else {
+        return;
+    };
+
     commands
-        .spawn((
-            Transform::default(),
-            GlobalTransform::default(),
-            LAYER_GIZMO,
-            GizmoAxisRoot,
-        ))
-        .with_children(|p| {
-            p.spawn(axis(
-                Srgba::RED.into(),
-                (scale * 1., scale * 0.1, scale * 0.1),
-                (scale * 1. / 2., 0., 0.),
-            )); // +X
-            p.spawn(axis(
-                Srgba::GREEN.into(),
-                (scale * 0.1, scale * 1., scale * 0.1),
-                (0., scale * 1. / 2., 0.),
-            )); // +Y
-            p.spawn(axis(
-                Srgba::BLUE.into(),
-                (scale * 0.1, scale * 0.1, scale * 1.),
-                (0., 0., scale * 1. / 2.),
-            )); // +Z
+        .entity(gizmo_camera_entity)
+        .with_children(|parent| {
+            parent
+                .spawn((
+                    // Keep gizmo at a fixed distance in front of the gizmo camera,
+                    // so it stays the same apparent size and position on screen.
+                    Transform::from_xyz(0.0, 0.0, -6.0),
+                    GlobalTransform::default(),
+                    Visibility::default(),
+                    InheritedVisibility::default(),
+                    ViewVisibility::default(),
+                    LAYER_GIZMO,
+                    GizmoAxisRoot,
+                ))
+                .with_children(|p| {
+                    p.spawn(axis(
+                        Srgba::RED.into(),
+                        (scale * 1., scale * 0.1, scale * 0.1),
+                        (scale * 1. / 2., 0., 0.),
+                    )); // +X
+                    p.spawn(axis(
+                        Srgba::GREEN.into(),
+                        (scale * 0.1, scale * 1., scale * 0.1),
+                        (0., scale * 1. / 2., 0.),
+                    )); // +Y
+                    p.spawn(axis(
+                        Srgba::BLUE.into(),
+                        (scale * 0.1, scale * 0.1, scale * 1.),
+                        (0., 0., scale * 1. / 2.),
+                    )); // +Z
+                });
         });
 }
 

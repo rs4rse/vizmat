@@ -258,12 +258,12 @@ pub fn run_app() {
             Startup,
             (
                 setup_cameras,
-                spawn_axis,
                 setup_buttons,
                 setup_file_ui,
                 setup_websocket_stream,
             ),
         )
+        .add_systems(Startup, spawn_axis.after(setup_cameras))
         .add_systems(Startup, (setup_light).after(setup_cameras))
         .add_systems(
             Update,
