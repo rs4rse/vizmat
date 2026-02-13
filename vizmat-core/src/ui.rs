@@ -168,6 +168,13 @@ type MainCameraTransformProjectionQuery<'w, 's> = Query<
     (With<Camera3d>, Without<MoleculeRoot>),
 >;
 
+type MainCameraChangedTransformQuery<'w, 's> = Query<
+    'w,
+    's,
+    &'static Transform,
+    (With<MainCamera>, Without<GizmoAxisRoot>, Changed<Transform>),
+>;
+
 // System to set up file upload UI
 pub(crate) fn setup_file_ui(mut commands: Commands, asset_server: Res<AssetServer>) {
     commands.insert_resource(UiTheme::default());
@@ -802,11 +809,12 @@ pub(crate) fn spawn_axis(
 }
 
 pub(crate) fn sync_gizmo_axis_rotation(
-    molecule_query: Query<&Transform, (With<MoleculeRoot>, Changed<Transform>)>,
-    mut gizmo_query: Query<&mut Transform, (With<GizmoAxisRoot>, Without<MoleculeRoot>)>,
+    camera_query: MainCameraChangedTransformQuery<'_, '_>,
+    mut gizmo_query: Query<&mut Transform, (With<GizmoAxisRoot>, Without<MainCamera>)>,
 ) {
-    if let (Ok(molecule), Ok(mut gizmo)) = (molecule_query.single(), gizmo_query.single_mut()) {
-        gizmo.rotation = molecule.rotation;
+    if let (Ok(camera), Ok(mut gizmo)) = (camera_query.single(), gizmo_query.single_mut()) {
+        // Keep axis in world-space orientation while gizmo camera rotates with the main camera.
+        gizmo.rotation = camera.rotation.inverse();
     }
 }
 
@@ -848,7 +856,6 @@ pub fn refresh_atoms_system(
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn camera_controls(
     mut camera_query: Query<&mut Transform, (With<MainCamera>, Without<MoleculeRoot>)>,
-    mut molecule_query: Query<&mut Transform, (With<MoleculeRoot>, Without<MainCamera>)>,
     mouse_buttons: Res<ButtonInput<MouseButton>>,
     keyboard: Res<ButtonInput<KeyCode>>,
     time: Res<Time>,
@@ -856,9 +863,7 @@ pub(crate) fn camera_controls(
     mut mouse_wheel_events: EventReader<MouseWheel>,
     mut camera_rig: ResMut<CameraRig>,
 ) {
-    if let (Ok(mut transform), Ok(mut molecule_transform)) =
-        (camera_query.single_mut(), molecule_query.single_mut())
-    {
+    if let Ok(mut transform) = camera_query.single_mut() {
         let mut zoom_change = 0.0;
         let mut pan_request = Vec2::ZERO;
 
@@ -881,8 +886,11 @@ pub(crate) fn camera_controls(
             } else {
                 Quat::IDENTITY
             };
-            molecule_transform.rotation =
-                yaw_rotation * pitch_rotation * molecule_transform.rotation;
+            let mut offset = transform.translation - camera_rig.target;
+            offset = yaw_rotation * pitch_rotation * offset;
+            transform.translation = camera_rig.target + offset;
+            transform.look_at(camera_rig.target, Vec3::Y);
+            camera_rig.distance = offset.length().max(MIN_DISTANCE);
         }
         if keyboard.pressed(KeyCode::KeyQ) || keyboard.pressed(KeyCode::KeyE) {
             let mut yaw = 0.0;
@@ -893,9 +901,11 @@ pub(crate) fn camera_controls(
                 yaw -= 1.0;
             }
             let rotate_speed = 1.8;
-            molecule_transform.rotation =
-                Quat::from_rotation_y(yaw * rotate_speed * time.delta_secs())
-                    * molecule_transform.rotation;
+            let mut offset = transform.translation - camera_rig.target;
+            offset = Quat::from_rotation_y(yaw * rotate_speed * time.delta_secs()) * offset;
+            transform.translation = camera_rig.target + offset;
+            transform.look_at(camera_rig.target, Vec3::Y);
+            camera_rig.distance = offset.length().max(MIN_DISTANCE);
         }
 
         if mouse_buttons.pressed(MouseButton::Right) {
