@@ -43,17 +43,12 @@ impl Default for BondInferenceSettings {
     }
 }
 
-#[derive(Resource, Clone, Copy, PartialEq, Eq)]
+#[derive(Resource, Clone, Copy, PartialEq, Eq, Default)]
 pub enum AtomColorMode {
+    #[default]
     Element,
     Chain,
     Residue,
-}
-
-impl Default for AtomColorMode {
-    fn default() -> Self {
-        Self::Element
-    }
 }
 
 // XXX: entity is the id point to the thing consist of components
