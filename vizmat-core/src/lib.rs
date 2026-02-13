@@ -19,14 +19,16 @@ pub(crate) mod structure;
 
 use crate::client::{poll_websocket_stream, setup_websocket_stream};
 use crate::io::{handle_file_drag_drop, load_dropped_file, update_crystal_from_file, FileDragDrop};
-use crate::parse::parse_xyz_content;
-use crate::structure::{update_crystal_system, BondInferenceSettings, UpdateStructure};
+use crate::parse::{parse_pdb_content, parse_xyz_content};
+use crate::structure::{
+    update_crystal_system, AtomColorMode, BondInferenceSettings, UpdateStructure,
+};
 use crate::ui::{
     apply_bond_tolerance_debounce, apply_theme_to_hud, auto_reset_view_on_crystal_change,
-    bond_tolerance_controls, camera_controls, handle_load_default_button, refresh_atoms_system,
-    reset_camera_button_interaction, setup_cameras, setup_file_ui, setup_light,
-    sync_gizmo_axis_rotation, toggle_light_attachment, toggle_theme_button, update_file_ui,
-    update_gizmo_viewport, update_scene,
+    bond_tolerance_controls, camera_controls, color_mode_button, handle_load_default_button,
+    handle_open_file_button, refresh_atoms_system, reset_camera_button_interaction, setup_cameras,
+    setup_file_ui, setup_light, sync_gizmo_axis_rotation, toggle_light_attachment,
+    toggle_theme_button, update_file_ui, update_gizmo_viewport, update_scene,
 };
 use crate::ui::{setup_buttons, spawn_axis};
 
@@ -253,6 +255,7 @@ pub fn run_app() {
             dom_drop_element_id: String::from("bevy-canvas"),
         })
         .init_resource::<FileDragDrop>()
+        .init_resource::<AtomColorMode>()
         .init_resource::<BondInferenceSettings>()
         .add_event::<UpdateStructure>()
         .add_event::<bevy::window::FileDragAndDrop>()
@@ -282,6 +285,8 @@ pub fn run_app() {
         )
         .add_systems(Update, reset_camera_button_interaction)
         .add_systems(Update, handle_load_default_button)
+        .add_systems(Update, handle_open_file_button)
+        .add_systems(Update, color_mode_button)
         .add_systems(Update, bond_tolerance_controls)
         .add_systems(
             Update,
@@ -313,19 +318,30 @@ fn web_event_observer(trigger: Trigger<WebEvent>, mut file_drag_drop: ResMut<Fil
         mime_type,
     } = trigger.event();
 
-    if name.ends_with("xyz") {
+    if name.ends_with("xyz") || name.ends_with("pdb") {
         let contents = String::from_utf8_lossy(data);
-        match parse_xyz_content(&contents) {
+        let parsed = if name.ends_with("xyz") {
+            parse_xyz_content(&contents)
+        } else {
+            parse_pdb_content(&contents)
+        };
+        match parsed {
             Ok(crystal) => {
                 file_drag_drop.dragged_file = None;
                 file_drag_drop.loaded_crystal = Some(crystal);
+                file_drag_drop.status_message = format!("Loaded: {name}");
+                file_drag_drop.status_kind = crate::io::FileStatusKind::Success;
             }
             Err(e) => {
-                eprintln!("Failed to parse XYZ file: {}", e)
+                eprintln!("Failed to parse structure file: {}", e);
+                file_drag_drop.status_message = format!("Parse error: {e}");
+                file_drag_drop.status_kind = crate::io::FileStatusKind::Error;
             }
         }
     } else {
-        panic!()
+        file_drag_drop.status_message = "Unsupported file. Please drop .xyz or .pdb".to_string();
+        file_drag_drop.status_kind = crate::io::FileStatusKind::Error;
+        return;
     }
 
     info!("loaded file: '{name}'");

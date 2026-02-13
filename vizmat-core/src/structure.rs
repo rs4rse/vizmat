@@ -12,6 +12,8 @@ pub struct Atom {
     pub x: f32,
     pub y: f32,
     pub z: f32,
+    pub chain_id: Option<String>,
+    pub res_name: Option<String>,
 }
 
 // Structure to hold our crystal data
@@ -38,6 +40,19 @@ impl Default for BondInferenceSettings {
             ui_tolerance_scale: 1.15,
             last_ui_change_secs: 0.0,
         }
+    }
+}
+
+#[derive(Resource, Clone, Copy, PartialEq, Eq)]
+pub enum AtomColorMode {
+    Element,
+    Chain,
+    Residue,
+}
+
+impl Default for AtomColorMode {
+    fn default() -> Self {
+        Self::Element
     }
 }
 

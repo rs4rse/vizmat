@@ -58,6 +58,7 @@ tracing = "0.1.44"
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 async-tungstenite = { version = "0.32.0", features = ["async-std", "async-std-runtime"] }
 futures-util = "0.3"
+rfd = "0.15"
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 wasm-bindgen = "0.2"

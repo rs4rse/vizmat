@@ -26,6 +26,8 @@ impl From<AtomData> for Atom {
             x: data.x,
             y: data.y,
             z: data.z,
+            chain_id: None,
+            res_name: None,
         }
     }
 }

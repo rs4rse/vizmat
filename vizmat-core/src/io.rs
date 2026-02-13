@@ -2,8 +2,15 @@
 use bevy::prelude::*;
 use std::path::PathBuf;
 
-use crate::parse::parse_xyz_content;
+use crate::parse::{parse_pdb_content, parse_xyz_content};
 use crate::structure::{Atom, Crystal};
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum FileStatusKind {
+    Info,
+    Success,
+    Error,
+}
 
 // System to load default crystal data
 pub(crate) fn load_default_crystal(mut commands: Commands) {
@@ -16,18 +23,24 @@ pub(crate) fn load_default_crystal(mut commands: Commands) {
                 x: 0.0,
                 y: 0.0,
                 z: 0.0,
+                chain_id: None,
+                res_name: None,
             },
             Atom {
                 element: "H".to_string(),
                 x: 0.757,
                 y: 0.587,
                 z: 0.0,
+                chain_id: None,
+                res_name: None,
             },
             Atom {
                 element: "H".to_string(),
                 x: -0.757,
                 y: 0.587,
                 z: 0.0,
+                chain_id: None,
+                res_name: None,
             },
         ],
     };
@@ -36,15 +49,22 @@ pub(crate) fn load_default_crystal(mut commands: Commands) {
 }
 
 // Resource to handle file drag and drop
-#[derive(Resource, Default)]
+#[derive(Resource)]
 pub(crate) struct FileDragDrop {
     pub(crate) dragged_file: Option<PathBuf>,
     pub(crate) loaded_crystal: Option<Crystal>,
+    pub(crate) status_message: String,
+    pub(crate) status_kind: FileStatusKind,
 }
 
-impl FileDragDrop {
-    pub(crate) fn dragged_file(&self) -> Option<&PathBuf> {
-        self.dragged_file.as_ref()
+impl Default for FileDragDrop {
+    fn default() -> Self {
+        Self {
+            dragged_file: None,
+            loaded_crystal: None,
+            status_message: "Drop XYZ/PDB file".to_string(),
+            status_kind: FileStatusKind::Info,
+        }
     }
 }
 
@@ -59,10 +79,18 @@ pub(crate) fn handle_file_drag_drop(
                 println!("File dropped: {:?}", path_buf);
 
                 if let Some(extension) = path_buf.extension() {
-                    if extension == "xyz" {
+                    let ext = extension.to_string_lossy().to_ascii_lowercase();
+                    if ext == "xyz" || ext == "pdb" {
                         file_drag_drop.dragged_file = Some(path_buf.clone());
+                        if let Some(name) = path_buf.file_name().and_then(|n| n.to_str()) {
+                            file_drag_drop.status_message = format!("Loading: {name}");
+                            file_drag_drop.status_kind = FileStatusKind::Info;
+                        }
                     } else {
-                        println!("Unsupported file type. Please drop an XYZ file.");
+                        println!("Unsupported file type. Please drop an XYZ or PDB file.");
+                        file_drag_drop.status_message =
+                            "Unsupported file. Please drop .xyz or .pdb".to_string();
+                        file_drag_drop.status_kind = FileStatusKind::Error;
                     }
                 }
             }
@@ -89,18 +117,40 @@ pub(crate) fn load_dropped_file(
             .is_none_or(|loaded_path| loaded_path != &path)
         {
             match std::fs::read_to_string(&path) {
-                Ok(contents) => match parse_xyz_content(&contents) {
-                    Ok(crystal) => {
-                        println!("Successfully loaded crystal from: {:?}", path);
-                        file_drag_drop.loaded_crystal = Some(crystal);
-                        *last_loaded_path = Some(path);
+                Ok(contents) => {
+                    let ext = path
+                        .extension()
+                        .map(|s| s.to_string_lossy().to_ascii_lowercase());
+                    let parsed = match ext.as_deref() {
+                        Some("xyz") => parse_xyz_content(&contents),
+                        Some("pdb") => parse_pdb_content(&contents),
+                        _ => Err(anyhow::anyhow!("Unsupported file extension")),
+                    };
+                    match parsed {
+                        Ok(crystal) => {
+                            println!("Successfully loaded crystal from: {:?}", path);
+                            let atom_count = crystal.atoms.len();
+                            file_drag_drop.loaded_crystal = Some(crystal);
+                            let name = path
+                                .file_name()
+                                .and_then(|n| n.to_str())
+                                .unwrap_or("structure");
+                            file_drag_drop.status_message =
+                                format!("Loaded: {name} ({atom_count} atoms)");
+                            file_drag_drop.status_kind = FileStatusKind::Success;
+                            *last_loaded_path = Some(path);
+                        }
+                        Err(e) => {
+                            eprintln!("Failed to parse structure file: {}", e);
+                            file_drag_drop.status_message = format!("Parse error: {e}");
+                            file_drag_drop.status_kind = FileStatusKind::Error;
+                        }
                     }
-                    Err(e) => {
-                        eprintln!("Failed to parse XYZ file: {}", e);
-                    }
-                },
+                }
                 Err(e) => {
                     eprintln!("Failed to read file: {}", e);
+                    file_drag_drop.status_message = format!("Read error: {e}");
+                    file_drag_drop.status_kind = FileStatusKind::Error;
                 }
             }
         }

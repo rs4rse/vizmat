@@ -9,8 +9,12 @@ use bevy::render::camera::Viewport;
 use bevy::render::view::RenderLayers;
 use bevy::ui::RelativeCursorPosition;
 
-use crate::constants::{get_element_color, get_element_size};
-use crate::structure::{infer_bonds_grid, AtomEntity, BondEntity, BondInferenceSettings, Crystal};
+use crate::constants::{get_element_color, get_element_size, get_residue_class_color};
+use crate::io::FileStatusKind;
+use crate::parse::{parse_pdb_content, parse_xyz_content};
+use crate::structure::{
+    infer_bonds_grid, AtomColorMode, AtomEntity, BondEntity, BondInferenceSettings, Crystal,
+};
 
 const LAYER_GIZMO: RenderLayers = RenderLayers::layer(1);
 const LAYER_CANVAS: RenderLayers = RenderLayers::layer(0);
@@ -36,6 +40,9 @@ pub(crate) struct FileUploadText;
 // Component for load default button
 #[derive(Component)]
 pub(crate) struct LoadDefaultButton;
+
+#[derive(Component)]
+pub(crate) struct OpenFileButton;
 
 #[derive(Component)]
 pub(crate) struct ThemeToggleButton;
@@ -72,6 +79,12 @@ pub(crate) struct BondToggleLabel;
 
 #[derive(Component)]
 pub(crate) struct BondToleranceFill;
+
+#[derive(Component)]
+pub(crate) struct ColorModeButton;
+
+#[derive(Component)]
+pub(crate) struct ColorModeLabel;
 
 #[derive(Resource, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ThemeMode {
@@ -144,6 +157,16 @@ fn themed_button_bg(mode: ThemeMode, interaction: Interaction) -> Color {
     }
 }
 
+fn chain_color(chain_id: &str) -> Color {
+    let mut hash: u32 = 2166136261;
+    for b in chain_id.as_bytes() {
+        hash ^= *b as u32;
+        hash = hash.wrapping_mul(16777619);
+    }
+    let hue = (hash % 360) as f32;
+    Color::hsl(hue, 0.70, 0.55)
+}
+
 #[derive(SystemParam)]
 pub(crate) struct HudThemeParams<'w, 's> {
     bg: ParamSet<'w, 's, HudBgQueries<'w, 's>>,
@@ -181,6 +204,17 @@ type ThemeToggleInteractionQuery<'w, 's> = Query<
         &'static Children,
     ),
     (Changed<Interaction>, With<ThemeToggleButton>),
+>;
+
+type ColorModeInteractionQuery<'w, 's> = Query<
+    'w,
+    's,
+    (
+        &'static Interaction,
+        &'static mut BackgroundColor,
+        &'static Children,
+    ),
+    (Changed<Interaction>, With<ColorModeButton>),
 >;
 
 type MainCameraTransformProjectionQuery<'w, 's> = Query<
@@ -239,6 +273,31 @@ pub(crate) fn setup_file_ui(mut commands: Commands, asset_server: Res<AssetServe
                     },
                     BorderColor(p.border),
                     BackgroundColor(p.button_bg),
+                    OpenFileButton,
+                    HudButton,
+                ))
+                .with_children(|button| {
+                    button.spawn((
+                        Text::new("Open File"),
+                        TextFont {
+                            font: default(),
+                            font_size: 12.0,
+                            ..default()
+                        },
+                        TextColor(p.text),
+                        HudButtonLabel,
+                    ));
+                });
+
+                row.spawn((
+                    Button,
+                    Node {
+                        padding: UiRect::axes(Val::Px(10.0), Val::Px(6.0)),
+                        border: UiRect::all(Val::Px(1.0)),
+                        ..default()
+                    },
+                    BorderColor(p.border),
+                    BackgroundColor(p.button_bg),
                     LoadDefaultButton,
                     HudButton,
                 ))
@@ -252,6 +311,31 @@ pub(crate) fn setup_file_ui(mut commands: Commands, asset_server: Res<AssetServe
                         },
                         TextColor(p.text),
                         HudButtonLabel,
+                    ));
+                });
+
+                row.spawn((
+                    Button,
+                    Node {
+                        padding: UiRect::axes(Val::Px(10.0), Val::Px(6.0)),
+                        border: UiRect::all(Val::Px(1.0)),
+                        ..default()
+                    },
+                    BorderColor(p.border),
+                    BackgroundColor(p.button_bg),
+                    ColorModeButton,
+                    HudButton,
+                ))
+                .with_children(|button| {
+                    button.spawn((
+                        Text::new("Color: Element"),
+                        TextFont {
+                            font_size: 12.0,
+                            ..default()
+                        },
+                        TextColor(p.text),
+                        HudButtonLabel,
+                        ColorModeLabel,
                     ));
                 });
 
@@ -379,7 +463,7 @@ pub(crate) fn setup_file_ui(mut commands: Commands, asset_server: Res<AssetServe
             ))
             .with_children(|right| {
                 right.spawn((
-                    Text::new("Drop XYZ file"),
+                    Text::new("Drop XYZ/PDB file"),
                     TextFont {
                         font_size: 12.0,
                         ..default()
@@ -455,17 +539,16 @@ pub(crate) fn setup_file_ui(mut commands: Commands, asset_server: Res<AssetServe
 // System to update file upload UI
 pub(crate) fn update_file_ui(
     file_drag_drop: Res<crate::io::FileDragDrop>,
-    mut text_query: Query<&mut Text, With<FileUploadText>>,
+    theme: Res<UiTheme>,
+    mut text_query: Query<(&mut Text, &mut TextColor), With<FileUploadText>>,
 ) {
-    if let Ok(mut text) = text_query.single_mut() {
-        if let Some(path) = file_drag_drop.dragged_file() {
-            if let Some(file_name) = path.file_name().and_then(|n| n.to_str()) {
-                // Update the text content
-                **text = format!("Loaded: {file_name}");
-            }
-        } else {
-            **text = "Drop XYZ file".to_string();
-        }
+    if let Ok((mut text, mut color)) = text_query.single_mut() {
+        **text = file_drag_drop.status_message.clone();
+        *color = match file_drag_drop.status_kind {
+            FileStatusKind::Info => TextColor(theme_palette(theme.mode).text),
+            FileStatusKind::Success => TextColor(Color::srgb(0.20, 0.72, 0.34)),
+            FileStatusKind::Error => TextColor(Color::srgb(0.90, 0.20, 0.22)),
+        };
     }
 }
 
@@ -581,6 +664,41 @@ pub(crate) fn toggle_theme_button(
             }
             Interaction::None => {
                 *color = BackgroundColor(themed_button_bg(theme.mode, Interaction::None));
+            }
+        }
+    }
+}
+
+pub(crate) fn color_mode_button(
+    mut mode: ResMut<AtomColorMode>,
+    mut interactions: ColorModeInteractionQuery<'_, '_>,
+    mut texts: Query<&mut Text, With<ColorModeLabel>>,
+    theme: Res<UiTheme>,
+) {
+    for (interaction, mut background, children) in &mut interactions {
+        match *interaction {
+            Interaction::Pressed => {
+                *background = BackgroundColor(themed_button_bg(theme.mode, Interaction::Pressed));
+                *mode = match *mode {
+                    AtomColorMode::Element => AtomColorMode::Chain,
+                    AtomColorMode::Chain => AtomColorMode::Residue,
+                    AtomColorMode::Residue => AtomColorMode::Element,
+                };
+                for child in children.iter() {
+                    if let Ok(mut text) = texts.get_mut(child) {
+                        text.0 = match *mode {
+                            AtomColorMode::Element => "Color: Element".into(),
+                            AtomColorMode::Chain => "Color: Chain".into(),
+                            AtomColorMode::Residue => "Color: Residue".into(),
+                        };
+                    }
+                }
+            }
+            Interaction::Hovered => {
+                *background = BackgroundColor(themed_button_bg(theme.mode, Interaction::Hovered));
+            }
+            Interaction::None => {
+                *background = BackgroundColor(themed_button_bg(theme.mode, Interaction::None));
             }
         }
     }
@@ -754,6 +872,73 @@ pub(crate) fn handle_load_default_button(
     }
 }
 
+#[allow(clippy::type_complexity)]
+pub(crate) fn handle_open_file_button(
+    mut interaction_query: Query<
+        (&Interaction, &mut BackgroundColor),
+        (Changed<Interaction>, With<OpenFileButton>),
+    >,
+    mut file_drag_drop: ResMut<crate::io::FileDragDrop>,
+    theme: Res<UiTheme>,
+) {
+    for (interaction, mut color) in &mut interaction_query {
+        match *interaction {
+            Interaction::Pressed => {
+                *color = BackgroundColor(themed_button_bg(theme.mode, Interaction::Pressed));
+                #[cfg(not(target_arch = "wasm32"))]
+                {
+                    let picked = rfd::FileDialog::new()
+                        .add_filter("Structure", &["xyz", "pdb"])
+                        .pick_file();
+                    if let Some(path) = picked {
+                        let ext = path
+                            .extension()
+                            .map(|s| s.to_string_lossy().to_ascii_lowercase());
+                        match std::fs::read_to_string(&path) {
+                            Ok(contents) => {
+                                let parsed = match ext.as_deref() {
+                                    Some("xyz") => parse_xyz_content(&contents),
+                                    Some("pdb") => parse_pdb_content(&contents),
+                                    _ => Err(anyhow::anyhow!("Unsupported file extension")),
+                                };
+                                match parsed {
+                                    Ok(crystal) => {
+                                        let atom_count = crystal.atoms.len();
+                                        let name = path
+                                            .file_name()
+                                            .and_then(|n| n.to_str())
+                                            .unwrap_or("structure")
+                                            .to_string();
+                                        file_drag_drop.dragged_file = Some(path);
+                                        file_drag_drop.loaded_crystal = Some(crystal);
+                                        file_drag_drop.status_message =
+                                            format!("Loaded: {name} ({atom_count} atoms)");
+                                        file_drag_drop.status_kind = FileStatusKind::Success;
+                                    }
+                                    Err(e) => {
+                                        file_drag_drop.status_message = format!("Parse error: {e}");
+                                        file_drag_drop.status_kind = FileStatusKind::Error;
+                                    }
+                                }
+                            }
+                            Err(e) => {
+                                file_drag_drop.status_message = format!("Read error: {e}");
+                                file_drag_drop.status_kind = FileStatusKind::Error;
+                            }
+                        }
+                    }
+                }
+            }
+            Interaction::Hovered => {
+                *color = BackgroundColor(themed_button_bg(theme.mode, Interaction::Hovered));
+            }
+            Interaction::None => {
+                *color = BackgroundColor(themed_button_bg(theme.mode, Interaction::None));
+            }
+        }
+    }
+}
+
 // System to respawn atoms when crystal changes
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn update_scene(
@@ -762,13 +947,18 @@ pub(crate) fn update_scene(
     mut materials: ResMut<Assets<StandardMaterial>>,
     crystal: Option<Res<Crystal>>,
     bond_settings: Res<BondInferenceSettings>,
+    color_mode: Res<AtomColorMode>,
     atom_query: Query<Entity, With<AtomEntity>>,
     bond_query: Query<Entity, With<BondEntity>>,
     molecule_root: Query<Entity, With<MoleculeRoot>>,
-    mut last_bond_cfg: Local<Option<(bool, f32)>>,
+    mut last_bond_cfg: Local<Option<(bool, f32, AtomColorMode)>>,
 ) {
     if let Some(crystal) = crystal {
-        let current_bond_cfg = (bond_settings.enabled, bond_settings.tolerance_scale);
+        let current_bond_cfg = (
+            bond_settings.enabled,
+            bond_settings.tolerance_scale,
+            *color_mode,
+        );
         let bond_cfg_changed = match *last_bond_cfg {
             Some(prev) => prev != current_bond_cfg,
             None => true,
@@ -793,6 +983,7 @@ pub(crate) fn update_scene(
                     &mut materials,
                     &crystal,
                     &bond_settings,
+                    *color_mode,
                     root_entity,
                 );
             }
@@ -809,6 +1000,7 @@ fn spawn_atoms(
     materials: &mut ResMut<Assets<StandardMaterial>>,
     crystal: &Crystal,
     bond_settings: &BondInferenceSettings,
+    color_mode: AtomColorMode,
     root_entity: Entity,
 ) {
     // Create a sphere mesh for atoms
@@ -859,12 +1051,30 @@ fn spawn_atoms(
 
         // Spawn atoms as 3D spheres
         for atom in &crystal.atoms {
+            let atom_color = match color_mode {
+                AtomColorMode::Element => get_element_color(&atom.element),
+                AtomColorMode::Chain => atom
+                    .chain_id
+                    .as_deref()
+                    .map(chain_color)
+                    .unwrap_or_else(|| get_element_color(&atom.element)),
+                AtomColorMode::Residue => atom
+                    .res_name
+                    .as_deref()
+                    .map(get_residue_class_color)
+                    .unwrap_or_else(|| get_element_color(&atom.element)),
+            };
+            let material_key = match color_mode {
+                AtomColorMode::Element => format!("E:{}", atom.element),
+                AtomColorMode::Chain => format!("C:{}", atom.chain_id.as_deref().unwrap_or("_")),
+                AtomColorMode::Residue => format!("R:{}", atom.res_name.as_deref().unwrap_or("_")),
+            };
             // Get or create material for this element
             let material = element_materials
-                .entry(atom.element.clone())
+                .entry(material_key)
                 .or_insert_with(|| {
                     materials.add(StandardMaterial {
-                        base_color: get_element_color(&atom.element),
+                        base_color: atom_color,
                         metallic: 0.0,
                         ..default()
                     })
@@ -1087,16 +1297,21 @@ pub fn refresh_atoms_system(
     mut commands: Commands,
     crystal: Option<Res<Crystal>>,
     bond_settings: Res<BondInferenceSettings>,
+    color_mode: Res<AtomColorMode>,
     atom_entities: Query<Entity, With<AtomEntity>>,
     bond_entities: Query<Entity, With<BondEntity>>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
     molecule_root: Query<Entity, With<MoleculeRoot>>,
-    mut last_bond_cfg: Local<Option<(bool, f32)>>,
+    mut last_bond_cfg: Local<Option<(bool, f32, AtomColorMode)>>,
 ) {
     // Only run when Crystal resource changes
     if let Some(ref crystal) = crystal {
-        let current_bond_cfg = (bond_settings.enabled, bond_settings.tolerance_scale);
+        let current_bond_cfg = (
+            bond_settings.enabled,
+            bond_settings.tolerance_scale,
+            *color_mode,
+        );
         let bond_cfg_changed = match *last_bond_cfg {
             Some(prev) => prev != current_bond_cfg,
             None => true,
@@ -1125,6 +1340,7 @@ pub fn refresh_atoms_system(
                 &mut materials,
                 &crystal,
                 &bond_settings,
+                *color_mode,
                 root_entity,
             );
         }
