@@ -76,6 +76,12 @@ Create a larger test structure (SARS-CoV-2 spike):
 just protein-6vxx
 ```
 
+Create a very large ribosome test structure:
+
+```bash
+just protein-3j3a
+```
+
 ## Roadmap
 
 * [x] Initial Bevy setup
