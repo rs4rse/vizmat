@@ -103,6 +103,7 @@ struct ThemePalette {
     border: Color,
     text: Color,
     text_muted: Color,
+    slider_fill: Color,
 }
 
 fn theme_palette(mode: ThemeMode) -> ThemePalette {
@@ -117,6 +118,7 @@ fn theme_palette(mode: ThemeMode) -> ThemePalette {
             border: Color::srgb(0.30, 0.30, 0.30),
             text: Color::WHITE,
             text_muted: Color::srgb(0.86, 0.90, 0.95),
+            slider_fill: Color::srgb(0.45, 0.72, 0.98),
         },
         ThemeMode::Light => ThemePalette {
             scene_bg: Color::srgb(0.96, 0.97, 0.99),
@@ -128,6 +130,7 @@ fn theme_palette(mode: ThemeMode) -> ThemePalette {
             border: Color::srgb(0.74, 0.76, 0.81),
             text: Color::srgb(0.12, 0.14, 0.18),
             text_muted: Color::srgb(0.18, 0.22, 0.30),
+            slider_fill: Color::srgb(0.10, 0.38, 0.90),
         },
     }
 }
@@ -160,6 +163,7 @@ type HudBgQueries<'w, 's> = (
         ),
         With<HudButton>,
     >,
+    Query<'w, 's, &'static mut BackgroundColor, With<BondToleranceFill>>,
 );
 
 type HudTextQueries<'w, 's> = (
@@ -348,7 +352,7 @@ pub(crate) fn setup_file_ui(mut commands: Commands, asset_server: Res<AssetServe
                             height: Val::Percent(100.0),
                             ..default()
                         },
-                        BackgroundColor(p.text_muted),
+                        BackgroundColor(p.slider_fill),
                         BondToleranceFill,
                     ));
                 });
@@ -601,6 +605,9 @@ pub(crate) fn apply_theme_to_hud(
     for (interaction, mut bg, mut border) in &mut themed.bg.p2() {
         *bg = BackgroundColor(themed_button_bg(theme.mode, *interaction));
         *border = BorderColor(p.border);
+    }
+    for mut fill in &mut themed.bg.p3() {
+        *fill = BackgroundColor(p.slider_fill);
     }
     for mut color in &mut themed.text.p0() {
         *color = TextColor(p.text);
