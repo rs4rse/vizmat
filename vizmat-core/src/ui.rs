@@ -122,9 +122,14 @@ fn themed_button_bg(mode: ThemeMode, interaction: Interaction) -> Color {
 
 #[derive(SystemParam)]
 pub(crate) struct HudThemeParams<'w, 's> {
-    top_bar_bg: Query<'w, 's, &'static mut BackgroundColor, With<HudTopBar>>,
-    bottom_bar_bg: Query<'w, 's, &'static mut BackgroundColor, With<HudBottomBar>>,
-    button_bg: Query<
+    bg: ParamSet<'w, 's, HudBgQueries<'w, 's>>,
+    text: ParamSet<'w, 's, HudTextQueries<'w, 's>>,
+}
+
+type HudBgQueries<'w, 's> = (
+    Query<'w, 's, &'static mut BackgroundColor, With<HudTopBar>>,
+    Query<'w, 's, &'static mut BackgroundColor, With<HudBottomBar>>,
+    Query<
         'w,
         's,
         (
@@ -134,11 +139,13 @@ pub(crate) struct HudThemeParams<'w, 's> {
         ),
         With<HudButton>,
     >,
-    button_label_text: Query<'w, 's, &'static mut TextColor, With<HudButtonLabel>>,
-    upload_text:
-        Query<'w, 's, &'static mut TextColor, (With<FileUploadText>, Without<HudButtonLabel>)>,
-    help_text: Query<'w, 's, &'static mut TextColor, With<HudHelpText>>,
-}
+);
+
+type HudTextQueries<'w, 's> = (
+    Query<'w, 's, &'static mut TextColor, With<HudButtonLabel>>,
+    Query<'w, 's, &'static mut TextColor, (With<FileUploadText>, Without<HudButtonLabel>)>,
+    Query<'w, 's, &'static mut TextColor, With<HudHelpText>>,
+);
 
 type ThemeToggleInteractionQuery<'w, 's> = Query<
     'w,
@@ -149,6 +156,13 @@ type ThemeToggleInteractionQuery<'w, 's> = Query<
         &'static Children,
     ),
     (Changed<Interaction>, With<ThemeToggleButton>),
+>;
+
+type MainCameraTransformProjectionQuery<'w, 's> = Query<
+    'w,
+    's,
+    (&'static mut Transform, &'static Projection),
+    (With<Camera3d>, Without<MoleculeRoot>),
 >;
 
 // System to set up file upload UI
@@ -402,23 +416,23 @@ pub(crate) fn apply_theme_to_hud(
     }
     let p = theme_palette(theme.mode);
     clear_color.0 = p.scene_bg;
-    for mut bg in &mut themed.top_bar_bg {
+    for mut bg in &mut themed.bg.p0() {
         *bg = BackgroundColor(p.bar_bg);
     }
-    for mut bg in &mut themed.bottom_bar_bg {
+    for mut bg in &mut themed.bg.p1() {
         *bg = BackgroundColor(p.bar_bg_alt);
     }
-    for (interaction, mut bg, mut border) in &mut themed.button_bg {
+    for (interaction, mut bg, mut border) in &mut themed.bg.p2() {
         *bg = BackgroundColor(themed_button_bg(theme.mode, *interaction));
         *border = BorderColor(p.border);
     }
-    for mut color in &mut themed.button_label_text {
+    for mut color in &mut themed.text.p0() {
         *color = TextColor(p.text);
     }
-    if let Ok(mut color) = themed.upload_text.single_mut() {
+    if let Ok(mut color) = themed.text.p1().single_mut() {
         *color = TextColor(p.text);
     }
-    for mut color in &mut themed.help_text {
+    for mut color in &mut themed.text.p2() {
         *color = TextColor(p.text_muted);
     }
 }
@@ -449,6 +463,74 @@ pub(crate) struct CameraRig {
     initial_translation: Vec3,
     initial_rotation: Quat,
     initial_scale: Vec3,
+}
+
+fn crystal_center_and_extents(crystal: &Crystal) -> Option<(Vec3, Vec3)> {
+    let first = crystal.atoms.first()?;
+    let mut min = Vec3::new(first.x, first.y, first.z);
+    let mut max = min;
+
+    for atom in &crystal.atoms {
+        let p = Vec3::new(atom.x, atom.y, atom.z);
+        min = min.min(p);
+        max = max.max(p);
+    }
+
+    Some(((min + max) * 0.5, max - min))
+}
+
+fn fit_distance_for_extents(extents: Vec3, projection: &Projection) -> f32 {
+    let radius = (extents.length() * 0.5).max(0.5);
+    match projection {
+        Projection::Perspective(perspective) => {
+            let fov_y = perspective.fov.max(0.1);
+            let aspect = perspective.aspect_ratio.max(0.1);
+            let fov_x = 2.0 * ((fov_y * 0.5).tan() * aspect).atan();
+            let limiting_fov = fov_x.min(fov_y);
+            (radius / (limiting_fov * 0.5).tan()) * 1.2
+        }
+        Projection::Orthographic(_) => radius * 2.5,
+        _ => radius * 2.5,
+    }
+}
+
+fn apply_initial_camera_reset(transform: &mut Transform, rig: &mut CameraRig) {
+    transform.translation = rig.initial_translation;
+    transform.rotation = rig.initial_rotation;
+    transform.scale = rig.initial_scale;
+    rig.target = rig.initial_target;
+    rig.distance = (rig.initial_translation - rig.initial_target)
+        .length()
+        .max(0.5);
+}
+
+fn apply_framed_camera_reset(
+    transform: &mut Transform,
+    projection: &Projection,
+    rig: &mut CameraRig,
+    crystal: Option<&Crystal>,
+) {
+    let Some(crystal) = crystal else {
+        apply_initial_camera_reset(transform, rig);
+        return;
+    };
+    let Some((center, extents)) = crystal_center_and_extents(crystal) else {
+        apply_initial_camera_reset(transform, rig);
+        return;
+    };
+
+    // Keep the default viewing direction, but place the camera far enough to frame the model.
+    let mut view_dir = (rig.initial_translation - rig.initial_target).normalize_or_zero();
+    if view_dir.length_squared() < f32::EPSILON {
+        view_dir = Vec3::new(1.0, 1.0, 1.0).normalize();
+    }
+    let distance = fit_distance_for_extents(extents, projection).max(0.5);
+
+    rig.target = center;
+    rig.distance = distance;
+    transform.translation = center + view_dir * distance;
+    transform.look_at(center, Vec3::Y);
+    transform.scale = Vec3::ONE;
 }
 
 // System to clear existing atoms when new crystal is loaded
@@ -835,7 +917,7 @@ pub(crate) fn camera_controls(
         if move_dir.length_squared() > 0.0 {
             let sprint =
                 keyboard.pressed(KeyCode::ShiftLeft) || keyboard.pressed(KeyCode::ShiftRight);
-            let move_speed = if sprint { 3.6 } else { 1.8 };
+            let move_speed = if sprint { 10.0 } else { 5.0 };
             let step = move_dir.normalize() * move_speed * time.delta_secs();
             camera_rig.target += step;
         }
@@ -941,6 +1023,33 @@ pub fn toggle_light_attachment(
     }
 }
 
+pub(crate) fn auto_reset_view_on_crystal_change(
+    crystal: Option<Res<Crystal>>,
+    camera_entity: Option<Res<MainCameraEntity>>,
+    mut camera_query: MainCameraTransformProjectionQuery<'_, '_>,
+    mut camera_rig: Option<ResMut<CameraRig>>,
+    mut molecule_query: Query<&mut Transform, (With<MoleculeRoot>, Without<Camera3d>)>,
+) {
+    let Some(crystal) = crystal else {
+        return;
+    };
+    if !crystal.is_changed() {
+        return;
+    }
+    let (Some(camera_entity), Some(rig)) = (camera_entity.as_deref(), camera_rig.as_deref_mut())
+    else {
+        return;
+    };
+
+    if let Ok((mut transform, projection)) = camera_query.get_mut(camera_entity.0) {
+        apply_framed_camera_reset(&mut transform, projection, rig, Some(&crystal));
+    }
+
+    if let Ok(mut molecule_transform) = molecule_query.single_mut() {
+        molecule_transform.rotation = Quat::IDENTITY;
+    }
+}
+
 // Handle reset button interaction.
 #[allow(clippy::type_complexity)]
 pub fn reset_camera_button_interaction(
@@ -949,9 +1058,10 @@ pub fn reset_camera_button_interaction(
         (Changed<Interaction>, With<ResetCameraButton>),
     >,
     camera_entity: Option<Res<MainCameraEntity>>,
-    mut camera_query: Query<&mut Transform, (With<Camera3d>, Without<MoleculeRoot>)>,
+    mut camera_query: MainCameraTransformProjectionQuery<'_, '_>,
     mut camera_rig: Option<ResMut<CameraRig>>,
     mut molecule_query: Query<&mut Transform, (With<MoleculeRoot>, Without<Camera3d>)>,
+    crystal: Option<Res<Crystal>>,
     theme: Res<UiTheme>,
 ) {
     for (interaction, mut background) in &mut interactions {
@@ -962,14 +1072,13 @@ pub fn reset_camera_button_interaction(
                 if let (Some(camera_entity), Some(rig)) =
                     (camera_entity.as_deref(), camera_rig.as_deref_mut())
                 {
-                    if let Ok(mut transform) = camera_query.get_mut(camera_entity.0) {
-                        transform.translation = rig.initial_translation;
-                        transform.rotation = rig.initial_rotation;
-                        transform.scale = rig.initial_scale;
-                        rig.target = rig.initial_target;
-                        rig.distance = (rig.initial_translation - rig.initial_target)
-                            .length()
-                            .max(0.5);
+                    if let Ok((mut transform, projection)) = camera_query.get_mut(camera_entity.0) {
+                        apply_framed_camera_reset(
+                            &mut transform,
+                            projection,
+                            rig,
+                            crystal.as_deref(),
+                        );
                     }
                 }
                 if let Ok(mut molecule_transform) = molecule_query.single_mut() {

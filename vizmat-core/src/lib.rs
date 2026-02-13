@@ -22,10 +22,10 @@ use crate::io::{handle_file_drag_drop, load_dropped_file, update_crystal_from_fi
 use crate::parse::parse_xyz_content;
 use crate::structure::{update_crystal_system, UpdateStructure};
 use crate::ui::{
-    apply_theme_to_hud, camera_controls, handle_load_default_button, refresh_atoms_system,
-    reset_camera_button_interaction, setup_cameras, setup_file_ui, setup_light,
-    sync_gizmo_axis_rotation, toggle_light_attachment, toggle_theme_button, update_file_ui,
-    update_scene,
+    apply_theme_to_hud, auto_reset_view_on_crystal_change, camera_controls,
+    handle_load_default_button, refresh_atoms_system, reset_camera_button_interaction,
+    setup_cameras, setup_file_ui, setup_light, sync_gizmo_axis_rotation, toggle_light_attachment,
+    toggle_theme_button, update_file_ui, update_scene,
 };
 use crate::ui::{setup_buttons, spawn_axis};
 
@@ -282,6 +282,10 @@ pub fn run_app() {
         .add_systems(Update, handle_load_default_button)
         .add_systems(Update, toggle_theme_button)
         .add_systems(Update, apply_theme_to_hud)
+        .add_systems(
+            Update,
+            auto_reset_view_on_crystal_change.after(update_crystal_from_file),
+        )
         .add_systems(
             Update,
             (camera_controls, sync_gizmo_axis_rotation, update_scene),
