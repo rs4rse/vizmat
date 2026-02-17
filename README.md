@@ -84,16 +84,10 @@ just protein-3j3a
 
 ## Sample SDF Compounds
 
-Download small SDF examples:
+Download all example SDF files (NAX, ESM, Vancomycin, Cyclosporin A):
 
 ```bash
-just compounds-sdf
-```
-
-Download larger SDF examples (Vancomycin + Cyclosporin A):
-
-```bash
-just compounds-big-sdf
+just download-sdf
 ```
 
 ## Screenshots

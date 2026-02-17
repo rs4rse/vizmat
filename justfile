@@ -27,9 +27,15 @@ protein-3j3a:
 watch:
     cargo watch -x "run"
 
-compounds-sdf:
+download-sdf:
     mkdir -p vizmat-app/assets/compounds
     curl -L "https://files.rcsb.org/ligands/download/NAX_ideal.sdf" -o vizmat-app/assets/compounds/NAX.sdf
     curl -L "https://files.rcsb.org/ligands/download/ESM_ideal.sdf" -o vizmat-app/assets/compounds/ESM.sdf
-    rg -n "V2000|M  END|\\$\\$\\$\\$" vizmat-app/assets/compounds/NAX.sdf vizmat-app/assets/compounds/ESM.sdf
-    echo "Downloaded SDF files to vizmat-app/assets/compounds/"
+    curl -L "https://pubchem.ncbi.nlm.nih.gov/rest/pug/compound/cid/14969/SDF" -o vizmat-app/assets/compounds/vancomycin.sdf
+    curl -L "https://pubchem.ncbi.nlm.nih.gov/rest/pug/compound/cid/5284373/SDF" -o vizmat-app/assets/compounds/cyclosporin_a.sdf
+    awk 'NR==4{print "NAX counts:",$0; exit}' vizmat-app/assets/compounds/NAX.sdf
+    awk 'NR==4{print "ESM counts:",$0; exit}' vizmat-app/assets/compounds/ESM.sdf
+    awk 'NR==4{print "vancomycin counts:",$0; exit}' vizmat-app/assets/compounds/vancomycin.sdf
+    awk 'NR==4{print "cyclosporin_a counts:",$0; exit}' vizmat-app/assets/compounds/cyclosporin_a.sdf
+    rg -n "V2000|M  END|\\$\\$\\$\\$" vizmat-app/assets/compounds/NAX.sdf vizmat-app/assets/compounds/ESM.sdf vizmat-app/assets/compounds/vancomycin.sdf vizmat-app/assets/compounds/cyclosporin_a.sdf
+    echo "Downloaded all example SDF files to vizmat-app/assets/compounds/"
