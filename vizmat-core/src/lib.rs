@@ -326,9 +326,15 @@ fn web_event_observer(trigger: Trigger<WebEvent>, mut file_drag_drop: ResMut<Fil
         let parsed = parse_structure_by_extension(ext, &contents);
         match parsed {
             Ok(crystal) => {
+                let atom_count = crystal.atoms.len();
+                let file_bond_count = crystal.bonds.as_ref().map_or(0, Vec::len);
                 file_drag_drop.dragged_file = None;
                 file_drag_drop.loaded_crystal = Some(crystal);
-                file_drag_drop.status_message = format!("Loaded: {name}");
+                file_drag_drop.status_message = if file_bond_count > 0 {
+                    format!("Loaded: {name} ({atom_count} atoms, {file_bond_count} file bonds)")
+                } else {
+                    format!("Loaded: {name} ({atom_count} atoms)")
+                };
                 file_drag_drop.status_kind = crate::io::FileStatusKind::Success;
             }
             Err(e) => {

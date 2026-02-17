@@ -929,6 +929,8 @@ pub(crate) fn handle_open_file_button(
                                 match parsed {
                                     Ok(crystal) => {
                                         let atom_count = crystal.atoms.len();
+                                        let file_bond_count =
+                                            crystal.bonds.as_ref().map_or(0, Vec::len);
                                         let name = path
                                             .file_name()
                                             .and_then(|n| n.to_str())
@@ -936,8 +938,13 @@ pub(crate) fn handle_open_file_button(
                                             .to_string();
                                         file_drag_drop.dragged_file = Some(path);
                                         file_drag_drop.loaded_crystal = Some(crystal);
-                                        file_drag_drop.status_message =
-                                            format!("Loaded: {name} ({atom_count} atoms)");
+                                        file_drag_drop.status_message = if file_bond_count > 0 {
+                                            format!(
+                                                "Loaded: {name} ({atom_count} atoms, {file_bond_count} file bonds)"
+                                            )
+                                        } else {
+                                            format!("Loaded: {name} ({atom_count} atoms)")
+                                        };
                                         file_drag_drop.status_kind = FileStatusKind::Success;
                                     }
                                     Err(e) => {
