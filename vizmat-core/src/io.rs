@@ -137,13 +137,19 @@ pub(crate) fn load_dropped_file(
                         Ok(crystal) => {
                             println!("Successfully loaded crystal from: {:?}", path);
                             let atom_count = crystal.atoms.len();
+                            let file_bond_count = crystal.bonds.as_ref().map_or(0, Vec::len);
                             file_drag_drop.loaded_crystal = Some(crystal);
                             let name = path
                                 .file_name()
                                 .and_then(|n| n.to_str())
                                 .unwrap_or("structure");
-                            file_drag_drop.status_message =
-                                format!("Loaded: {name} ({atom_count} atoms)");
+                            file_drag_drop.status_message = if file_bond_count > 0 {
+                                format!(
+                                    "Loaded: {name} ({atom_count} atoms, {file_bond_count} file bonds)"
+                                )
+                            } else {
+                                format!("Loaded: {name} ({atom_count} atoms)")
+                            };
                             file_drag_drop.status_kind = FileStatusKind::Success;
                             *last_loaded_path = Some(path);
                         }
@@ -177,11 +183,28 @@ pub(crate) fn update_crystal_from_file(
             let new_bond_count = crystal.bonds.as_ref().map_or(0, Vec::len);
             if current.atoms.len() != crystal.atoms.len() || current_bond_count != new_bond_count {
                 commands.insert_resource(crystal.clone());
-                println!("Crystal updated with {} atoms", crystal.atoms.len());
+                if new_bond_count > 0 {
+                    println!(
+                        "Crystal updated with {} atoms and {} file bonds",
+                        crystal.atoms.len(),
+                        new_bond_count
+                    );
+                } else {
+                    println!("Crystal updated with {} atoms", crystal.atoms.len());
+                }
             }
         } else {
             commands.insert_resource(crystal.clone());
-            println!("Crystal loaded with {} atoms", crystal.atoms.len());
+            let new_bond_count = crystal.bonds.as_ref().map_or(0, Vec::len);
+            if new_bond_count > 0 {
+                println!(
+                    "Crystal loaded with {} atoms and {} file bonds",
+                    crystal.atoms.len(),
+                    new_bond_count
+                );
+            } else {
+                println!("Crystal loaded with {} atoms", crystal.atoms.len());
+            }
         }
     }
 }
