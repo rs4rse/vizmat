@@ -30,7 +30,8 @@ use crate::ui::{
     bond_tolerance_controls, camera_controls, color_mode_button, handle_load_default_button,
     handle_open_file_button, refresh_atoms_system, reset_camera_button_interaction, setup_cameras,
     setup_file_ui, setup_light, sync_gizmo_axis_rotation, toggle_light_attachment,
-    toggle_theme_button, update_file_ui, update_gizmo_viewport, update_scene,
+    toggle_theme_button, update_bond_order_legend, update_file_ui, update_gizmo_viewport,
+    update_scene,
 };
 use crate::ui::{setup_buttons, spawn_axis};
 
@@ -307,6 +308,7 @@ pub fn run_app() {
                 sync_gizmo_axis_rotation,
                 update_gizmo_viewport,
                 update_scene,
+                update_bond_order_legend.after(update_scene),
             ),
         )
         .add_observer(web_event_observer)

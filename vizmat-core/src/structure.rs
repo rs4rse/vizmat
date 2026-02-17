@@ -62,6 +62,9 @@ pub struct AtomEntity;
 #[derive(Component)]
 pub struct BondEntity;
 
+#[derive(Component, Debug, Clone, Copy)]
+pub struct BondOrder(pub u8);
+
 #[derive(Debug, Clone, Copy)]
 pub struct Bond {
     pub a: usize,
