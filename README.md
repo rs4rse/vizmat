@@ -82,6 +82,30 @@ Create a very large ribosome test structure:
 just protein-3j3a
 ```
 
+## Sample SDF Compounds
+
+Download small SDF examples:
+
+```bash
+just compounds-sdf
+```
+
+Download larger SDF examples (Vancomycin + Cyclosporin A):
+
+```bash
+just compounds-big-sdf
+```
+
+## Screenshots
+
+Cyclosporin (Element):
+
+![Cyclosporin Element](assets/screenshots/cyclosporin.png)
+
+Cyclosporin (Bond Env):
+
+![Cyclosporin Bond Env](assets/screenshots/cyclosporin-bond-env.png)
+
 ## Roadmap
 
 * [x] Initial Bevy setup

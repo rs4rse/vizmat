@@ -1,6 +1,6 @@
 #![allow(clippy::needless_pass_by_value)]
 
-use std::collections::{BTreeSet, HashMap};
+use std::collections::{BTreeSet, HashMap, HashSet, VecDeque};
 
 use bevy::ecs::system::SystemParam;
 use bevy::input::mouse::{MouseMotion, MouseWheel};
@@ -116,6 +116,19 @@ impl Default for UiTheme {
     }
 }
 
+#[derive(Resource, Clone)]
+pub(crate) struct ColorModeAvailability {
+    modes: Vec<AtomColorMode>,
+}
+
+impl Default for ColorModeAvailability {
+    fn default() -> Self {
+        Self {
+            modes: vec![AtomColorMode::Element],
+        }
+    }
+}
+
 #[derive(Clone, Copy)]
 struct ThemePalette {
     scene_bg: Color,
@@ -176,6 +189,129 @@ fn chain_color(chain_id: &str) -> Color {
     }
     let hue = (hash % 360) as f32;
     Color::hsl(hue, 0.70, 0.55)
+}
+
+fn color_mode_label(mode: AtomColorMode) -> &'static str {
+    match mode {
+        AtomColorMode::Element => "Color: Element",
+        AtomColorMode::Chain => "Color: Chain",
+        AtomColorMode::Residue => "Color: Residue",
+        AtomColorMode::Ring => "Color: Ring",
+        AtomColorMode::BondEnv => "Color: Bond Env",
+    }
+}
+
+fn next_mode(modes: &[AtomColorMode], current: AtomColorMode) -> AtomColorMode {
+    if modes.is_empty() {
+        return AtomColorMode::Element;
+    }
+    let pos = modes.iter().position(|mode| *mode == current).unwrap_or(0);
+    modes[(pos + 1) % modes.len()]
+}
+
+fn compute_ring_atoms(atom_count: usize, bonds: &[crate::structure::Bond]) -> Vec<bool> {
+    if atom_count == 0 {
+        return Vec::new();
+    }
+    let mut degree = vec![0_usize; atom_count];
+    let mut adj: Vec<Vec<usize>> = vec![Vec::new(); atom_count];
+    for bond in bonds {
+        if bond.a >= atom_count || bond.b >= atom_count || bond.a == bond.b {
+            continue;
+        }
+        degree[bond.a] += 1;
+        degree[bond.b] += 1;
+        adj[bond.a].push(bond.b);
+        adj[bond.b].push(bond.a);
+    }
+
+    let mut removed = vec![false; atom_count];
+    let mut queue = VecDeque::new();
+    for (idx, deg) in degree.iter().enumerate() {
+        if *deg <= 1 {
+            queue.push_back(idx);
+        }
+    }
+
+    while let Some(node) = queue.pop_front() {
+        if removed[node] {
+            continue;
+        }
+        removed[node] = true;
+        for &n in &adj[node] {
+            if removed[n] {
+                continue;
+            }
+            degree[n] = degree[n].saturating_sub(1);
+            if degree[n] == 1 {
+                queue.push_back(n);
+            }
+        }
+    }
+
+    removed.into_iter().map(|is_removed| !is_removed).collect()
+}
+
+fn compute_bond_env_atoms(atom_count: usize, bonds: &[crate::structure::Bond]) -> Vec<bool> {
+    let mut marks = vec![false; atom_count];
+    for bond in bonds {
+        if bond.order >= 2 {
+            if bond.a < atom_count {
+                marks[bond.a] = true;
+            }
+            if bond.b < atom_count {
+                marks[bond.b] = true;
+            }
+        }
+    }
+    marks
+}
+
+fn count_unique_non_empty(values: impl Iterator<Item = Option<String>>) -> usize {
+    let mut set = HashSet::new();
+    for value in values.flatten() {
+        if !value.is_empty() {
+            set.insert(value);
+        }
+    }
+    set.len()
+}
+
+fn compute_available_color_modes(
+    crystal: Option<&Crystal>,
+    bond_settings: &BondInferenceSettings,
+) -> Vec<AtomColorMode> {
+    let mut modes = vec![AtomColorMode::Element];
+    let Some(crystal) = crystal else {
+        return modes;
+    };
+
+    let chain_count = count_unique_non_empty(crystal.atoms.iter().map(|a| a.chain_id.clone()));
+    if chain_count > 1 {
+        modes.push(AtomColorMode::Chain);
+    }
+
+    let residue_count = count_unique_non_empty(crystal.atoms.iter().map(|a| a.res_name.clone()));
+    if residue_count > 1 {
+        modes.push(AtomColorMode::Residue);
+    }
+
+    let (bonds, _) = resolve_bonds(crystal, bond_settings);
+    if !bonds.is_empty() {
+        let ring_atoms = compute_ring_atoms(crystal.atoms.len(), &bonds);
+        let ring_count = ring_atoms.iter().filter(|&&v| v).count();
+        if ring_count > 0 && ring_count < crystal.atoms.len() {
+            modes.push(AtomColorMode::Ring);
+        }
+
+        let bond_env_atoms = compute_bond_env_atoms(crystal.atoms.len(), &bonds);
+        let env_count = bond_env_atoms.iter().filter(|&&v| v).count();
+        if env_count > 0 && env_count < crystal.atoms.len() {
+            modes.push(AtomColorMode::BondEnv);
+        }
+    }
+
+    modes
 }
 
 #[derive(SystemParam)]
@@ -246,6 +382,7 @@ type MainCameraChangedTransformQuery<'w, 's> = Query<
 // System to set up file upload UI
 pub(crate) fn setup_file_ui(mut commands: Commands, asset_server: Res<AssetServer>) {
     commands.insert_resource(UiTheme::default());
+    commands.insert_resource(ColorModeAvailability::default());
     let p = theme_palette(ThemeMode::Dark);
     let icon_font: Handle<Font> = asset_server.load("fonts/fa-solid-900.ttf");
     commands.insert_resource(ClearColor(p.scene_bg));
@@ -730,28 +867,15 @@ pub(crate) fn toggle_theme_button(
 
 pub(crate) fn color_mode_button(
     mut mode: ResMut<AtomColorMode>,
+    availability: Res<ColorModeAvailability>,
     mut interactions: ColorModeInteractionQuery<'_, '_>,
-    mut texts: Query<&mut Text, With<ColorModeLabel>>,
     theme: Res<UiTheme>,
 ) {
-    for (interaction, mut background, children) in &mut interactions {
+    for (interaction, mut background, _children) in &mut interactions {
         match *interaction {
             Interaction::Pressed => {
                 *background = BackgroundColor(themed_button_bg(theme.mode, Interaction::Pressed));
-                *mode = match *mode {
-                    AtomColorMode::Element => AtomColorMode::Chain,
-                    AtomColorMode::Chain => AtomColorMode::Residue,
-                    AtomColorMode::Residue => AtomColorMode::Element,
-                };
-                for child in children.iter() {
-                    if let Ok(mut text) = texts.get_mut(child) {
-                        text.0 = match *mode {
-                            AtomColorMode::Element => "Color: Element".into(),
-                            AtomColorMode::Chain => "Color: Chain".into(),
-                            AtomColorMode::Residue => "Color: Residue".into(),
-                        };
-                    }
-                }
+                *mode = next_mode(&availability.modes, *mode);
             }
             Interaction::Hovered => {
                 *background = BackgroundColor(themed_button_bg(theme.mode, Interaction::Hovered));
@@ -760,6 +884,33 @@ pub(crate) fn color_mode_button(
                 *background = BackgroundColor(themed_button_bg(theme.mode, Interaction::None));
             }
         }
+    }
+}
+
+pub(crate) fn update_color_mode_availability(
+    crystal: Option<Res<Crystal>>,
+    bond_settings: Res<BondInferenceSettings>,
+    mut mode: ResMut<AtomColorMode>,
+    mut availability: ResMut<ColorModeAvailability>,
+) {
+    let next_modes = compute_available_color_modes(crystal.as_deref(), &bond_settings);
+    if availability.modes != next_modes {
+        availability.modes = next_modes;
+    }
+    if !availability.modes.contains(&*mode) {
+        *mode = AtomColorMode::Element;
+    }
+}
+
+pub(crate) fn sync_color_mode_label(
+    mode: Res<AtomColorMode>,
+    mut labels: Query<&mut Text, With<ColorModeLabel>>,
+) {
+    if !mode.is_changed() {
+        return;
+    }
+    if let Ok(mut text) = labels.single_mut() {
+        text.0 = color_mode_label(*mode).into();
     }
 }
 
@@ -1085,6 +1236,8 @@ fn spawn_atoms(
     // Create materials for different elements
     let mut element_materials: HashMap<String, Handle<StandardMaterial>> = HashMap::new();
     let (bonds, _source) = resolve_bonds(crystal, bond_settings);
+    let ring_atoms = compute_ring_atoms(crystal.atoms.len(), &bonds);
+    let bond_env_atoms = compute_bond_env_atoms(crystal.atoms.len(), &bonds);
     let mut bond_materials: HashMap<u8, Handle<StandardMaterial>> = HashMap::new();
 
     commands.entity(root_entity).with_children(|parent| {
@@ -1155,7 +1308,7 @@ fn spawn_atoms(
         }
 
         // Spawn atoms as 3D spheres
-        for atom in &crystal.atoms {
+        for (idx, atom) in crystal.atoms.iter().enumerate() {
             let atom_color = match color_mode {
                 AtomColorMode::Element => get_element_color(&atom.element),
                 AtomColorMode::Chain => atom
@@ -1168,11 +1321,41 @@ fn spawn_atoms(
                     .as_deref()
                     .map(get_residue_class_color)
                     .unwrap_or_else(|| get_element_color(&atom.element)),
+                AtomColorMode::Ring => {
+                    if ring_atoms.get(idx).copied().unwrap_or(false) {
+                        Color::srgb(0.94, 0.73, 0.22)
+                    } else {
+                        Color::srgb(0.34, 0.73, 0.96)
+                    }
+                }
+                AtomColorMode::BondEnv => {
+                    if bond_env_atoms.get(idx).copied().unwrap_or(false) {
+                        Color::srgb(0.95, 0.46, 0.22)
+                    } else {
+                        Color::srgb(0.62, 0.64, 0.68)
+                    }
+                }
             };
             let material_key = match color_mode {
                 AtomColorMode::Element => format!("E:{}", atom.element),
                 AtomColorMode::Chain => format!("C:{}", atom.chain_id.as_deref().unwrap_or("_")),
                 AtomColorMode::Residue => format!("R:{}", atom.res_name.as_deref().unwrap_or("_")),
+                AtomColorMode::Ring => {
+                    let bucket = if ring_atoms.get(idx).copied().unwrap_or(false) {
+                        "ring"
+                    } else {
+                        "nonring"
+                    };
+                    format!("G:{bucket}")
+                }
+                AtomColorMode::BondEnv => {
+                    let bucket = if bond_env_atoms.get(idx).copied().unwrap_or(false) {
+                        "bondenv"
+                    } else {
+                        "other"
+                    };
+                    format!("B:{bucket}")
+                }
             };
             // Get or create material for this element
             let material = element_materials

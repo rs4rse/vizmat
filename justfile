@@ -26,3 +26,10 @@ protein-3j3a:
 
 watch:
     cargo watch -x "run"
+
+compounds-sdf:
+    mkdir -p vizmat-app/assets/compounds
+    curl -L "https://files.rcsb.org/ligands/download/NAX_ideal.sdf" -o vizmat-app/assets/compounds/NAX.sdf
+    curl -L "https://files.rcsb.org/ligands/download/ESM_ideal.sdf" -o vizmat-app/assets/compounds/ESM.sdf
+    rg -n "V2000|M  END|\\$\\$\\$\\$" vizmat-app/assets/compounds/NAX.sdf vizmat-app/assets/compounds/ESM.sdf
+    echo "Downloaded SDF files to vizmat-app/assets/compounds/"
