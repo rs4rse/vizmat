@@ -1900,69 +1900,6 @@ pub(crate) fn sync_gizmo_axis_rotation(
     }
 }
 
-// System to refresh atoms when Crystal resource changes
-#[allow(clippy::too_many_arguments)]
-pub fn refresh_atoms_system(
-    mut commands: Commands,
-    crystal: Option<Res<Crystal>>,
-    bond_settings: Res<BondInferenceSettings>,
-    color_mode: Res<AtomColorMode>,
-    atom_entities: Query<Entity, With<AtomEntity>>,
-    bond_entities: Query<Entity, With<BondEntity>>,
-    mut meshes: ResMut<Assets<Mesh>>,
-    mut materials: ResMut<Assets<StandardMaterial>>,
-    molecule_root: Query<Entity, With<MoleculeRoot>>,
-    mut last_bond_cfg: Local<Option<(bool, bool, f32, AtomColorMode)>>,
-) {
-    // Only run when Crystal resource changes
-    if let Some(ref crystal) = crystal {
-        let has_file_bonds = crystal.has_explicit_bonds();
-        let effective_tolerance = if has_file_bonds {
-            0.0
-        } else {
-            bond_settings.tolerance_scale
-        };
-        let current_bond_cfg = (
-            bond_settings.enabled,
-            has_file_bonds,
-            effective_tolerance,
-            *color_mode,
-        );
-        let bond_cfg_changed = match *last_bond_cfg {
-            Some(prev) => prev != current_bond_cfg,
-            None => true,
-        };
-        *last_bond_cfg = Some(current_bond_cfg);
-
-        if !crystal.is_changed() && !bond_cfg_changed {
-            return;
-        }
-    }
-
-    // Despawn all existing atoms
-    for entity in atom_entities.iter() {
-        commands.entity(entity).despawn();
-    }
-    // Despawn all existing bonds
-    for entity in bond_entities.iter() {
-        commands.entity(entity).despawn();
-    }
-
-    if let Some(crystal) = crystal {
-        if let Ok(root_entity) = molecule_root.single() {
-            spawn_atoms(
-                &mut commands,
-                &mut meshes,
-                &mut materials,
-                &crystal,
-                &bond_settings,
-                *color_mode,
-                root_entity,
-            );
-        }
-    }
-}
-
 pub(crate) fn update_bond_order_legend(
     bond_settings: Res<BondInferenceSettings>,
     mut legend_query: Query<&mut Node, With<BondOrderLegendContainer>>,

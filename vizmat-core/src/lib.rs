@@ -28,12 +28,11 @@ use crate::structure::{
 use crate::ui::{
     apply_bond_tolerance_debounce, apply_theme_to_hud, auto_reset_view_on_crystal_change,
     bond_tolerance_controls, camera_controls, color_mode_button, handle_load_default_button,
-    handle_open_file_button, refresh_atoms_system, reset_camera_button_interaction, setup_cameras,
-    setup_file_ui, setup_light, sync_atom_selection_highlight, sync_color_mode_label,
-    sync_gizmo_axis_rotation, toggle_light_attachment, toggle_theme_button,
-    update_atom_hover_cache, update_atom_hover_label, update_bond_order_legend,
-    update_color_mode_availability, update_file_ui, update_gizmo_viewport, update_scene,
-    update_selected_atom_from_click,
+    handle_open_file_button, reset_camera_button_interaction, setup_cameras, setup_file_ui,
+    setup_light, sync_atom_selection_highlight, sync_color_mode_label, sync_gizmo_axis_rotation,
+    toggle_light_attachment, toggle_theme_button, update_atom_hover_cache, update_atom_hover_label,
+    update_bond_order_legend, update_color_mode_availability, update_file_ui,
+    update_gizmo_viewport, update_scene, update_selected_atom_from_click,
 };
 use crate::ui::{setup_buttons, spawn_axis};
 
@@ -284,7 +283,6 @@ pub fn run_app() {
                 load_dropped_file,
                 update_crystal_from_file,
                 update_file_ui,
-                refresh_atoms_system,
                 toggle_light_attachment,
             ),
         )
