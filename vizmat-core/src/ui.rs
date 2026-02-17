@@ -1,6 +1,6 @@
 #![allow(clippy::needless_pass_by_value)]
 
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 
 use bevy::ecs::system::SystemParam;
 use bevy::input::mouse::{MouseMotion, MouseWheel};
@@ -15,7 +15,7 @@ use crate::formats::{
 };
 use crate::io::FileStatusKind;
 use crate::structure::{
-    resolve_bonds, AtomColorMode, AtomEntity, BondEntity, BondInferenceSettings, Crystal,
+    resolve_bonds, AtomColorMode, AtomEntity, BondEntity, BondInferenceSettings, BondOrder, Crystal,
 };
 
 const LAYER_GIZMO: RenderLayers = RenderLayers::layer(1);
@@ -68,6 +68,9 @@ pub(crate) struct HudButtonLabel;
 pub(crate) struct HudHelpText;
 
 #[derive(Component)]
+pub(crate) struct HudLegendText;
+
+#[derive(Component)]
 pub(crate) struct BondToleranceSliderTrack;
 
 #[derive(Component)]
@@ -87,6 +90,12 @@ pub(crate) struct ColorModeButton;
 
 #[derive(Component)]
 pub(crate) struct ColorModeLabel;
+
+#[derive(Component)]
+pub(crate) struct BondOrderLegendContainer;
+
+#[derive(Component)]
+pub(crate) struct BondOrderLegendText;
 
 #[derive(Resource, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ThemeMode {
@@ -195,6 +204,7 @@ type HudTextQueries<'w, 's> = (
     Query<'w, 's, &'static mut TextColor, With<HudButtonLabel>>,
     Query<'w, 's, &'static mut TextColor, (With<FileUploadText>, Without<HudButtonLabel>)>,
     Query<'w, 's, &'static mut TextColor, With<HudHelpText>>,
+    Query<'w, 's, &'static mut TextColor, With<HudLegendText>>,
 );
 
 type ThemeToggleInteractionQuery<'w, 's> = Query<
@@ -536,6 +546,34 @@ pub(crate) fn setup_file_ui(mut commands: Commands, asset_server: Res<AssetServe
                 HudHelpText,
             ));
         });
+
+    commands
+        .spawn((
+            Node {
+                position_type: PositionType::Absolute,
+                right: Val::Px(10.0),
+                bottom: Val::Px(38.0),
+                display: Display::None,
+                padding: UiRect::axes(Val::Px(8.0), Val::Px(4.0)),
+                border: UiRect::all(Val::Px(1.0)),
+                ..default()
+            },
+            BorderColor(p.border),
+            BackgroundColor(Color::srgba(0.5, 0.5, 0.5, 0.10)),
+            BondOrderLegendContainer,
+        ))
+        .with_children(|legend| {
+            legend.spawn((
+                Text::new("Bond orders: 1x, 2x"),
+                TextFont {
+                    font_size: 11.0,
+                    ..default()
+                },
+                TextColor(p.text_muted),
+                HudLegendText,
+                BondOrderLegendText,
+            ));
+        });
 }
 
 // System to update file upload UI
@@ -584,13 +622,11 @@ pub(crate) fn bond_tolerance_controls(
     let using_file_bonds =
         settings.enabled && crystal.as_deref().is_some_and(|c| c.has_explicit_bonds());
 
-    let mut changed = crystal.as_ref().is_some_and(|c| c.is_changed());
     for (interaction, mut color) in &mut interaction_queries.p0() {
         match *interaction {
             Interaction::Pressed => {
                 settings.enabled = !settings.enabled;
                 *color = BackgroundColor(themed_button_bg(theme.mode, Interaction::Pressed));
-                changed = true;
             }
             Interaction::Hovered => {
                 *color = BackgroundColor(themed_button_bg(theme.mode, Interaction::Hovered));
@@ -610,43 +646,40 @@ pub(crate) fn bond_tolerance_controls(
                 if (snapped - settings.ui_tolerance_scale).abs() > f32::EPSILON {
                     settings.ui_tolerance_scale = snapped;
                     settings.last_ui_change_secs = time.elapsed_secs_f64();
-                    changed = true;
                 }
             }
         }
     }
 
-    if changed {
-        if let Ok(mut slider_track) = node_queries.p0().single_mut() {
-            slider_track.display = if using_file_bonds {
-                Display::None
-            } else {
-                Display::Flex
-            };
-        }
-        if let Ok(mut text) = text_queries.p0().single_mut() {
-            text.0 = if using_file_bonds {
-                "File".into()
-            } else {
-                format!("{:.2}", settings.ui_tolerance_scale)
-            };
-        }
-        if let Ok(mut text) = text_queries.p1().single_mut() {
-            text.0 = if !settings.enabled {
-                "Bonds: Off".into()
-            } else if using_file_bonds {
-                "Bonds: On (File)".into()
-            } else {
-                "Bonds: On (Infer)".into()
-            };
-        }
-        if let Ok(mut fill) = node_queries.p1().single_mut() {
-            fill.width = if using_file_bonds {
-                Val::Percent(100.0)
-            } else {
-                Val::Percent(slider_percent(settings.ui_tolerance_scale))
-            };
-        }
+    if let Ok(mut slider_track) = node_queries.p0().single_mut() {
+        slider_track.display = if using_file_bonds {
+            Display::None
+        } else {
+            Display::Flex
+        };
+    }
+    if let Ok(mut text) = text_queries.p0().single_mut() {
+        text.0 = if using_file_bonds {
+            "File".into()
+        } else {
+            format!("{:.2}", settings.ui_tolerance_scale)
+        };
+    }
+    if let Ok(mut text) = text_queries.p1().single_mut() {
+        text.0 = if !settings.enabled {
+            "Bonds: Off".into()
+        } else if using_file_bonds {
+            "Bonds: On (File)".into()
+        } else {
+            "Bonds: On (Infer)".into()
+        };
+    }
+    if let Ok(mut fill) = node_queries.p1().single_mut() {
+        fill.width = if using_file_bonds {
+            Val::Percent(100.0)
+        } else {
+            Val::Percent(slider_percent(settings.ui_tolerance_scale))
+        };
     }
 }
 
@@ -760,6 +793,9 @@ pub(crate) fn apply_theme_to_hud(
         *color = TextColor(p.text);
     }
     for mut color in &mut themed.text.p2() {
+        *color = TextColor(p.text_muted);
+    }
+    for mut color in &mut themed.text.p3() {
         *color = TextColor(p.text_muted);
     }
 }
@@ -1048,13 +1084,8 @@ fn spawn_atoms(
 
     // Create materials for different elements
     let mut element_materials: HashMap<String, Handle<StandardMaterial>> = HashMap::new();
-    let bond_material = materials.add(StandardMaterial {
-        base_color: Color::srgb(0.65, 0.68, 0.72),
-        metallic: 0.0,
-        perceptual_roughness: 0.8,
-        ..default()
-    });
     let (bonds, _source) = resolve_bonds(crystal, bond_settings);
+    let mut bond_materials: HashMap<u8, Handle<StandardMaterial>> = HashMap::new();
 
     commands.entity(root_entity).with_children(|parent| {
         for bond in &bonds {
@@ -1067,21 +1098,60 @@ fn spawn_atoms(
             if length <= 1e-5 {
                 continue;
             }
-            let rotation = Quat::from_rotation_arc(Vec3::Y, axis / length);
-            let radius = match bond.order {
-                2 => 0.06,
-                3 => 0.05,
-                _ => 0.07,
+            let axis_dir = axis / length;
+            let rotation = Quat::from_rotation_arc(Vec3::Y, axis_dir);
+            let radius = 0.042;
+            let stick_count = match bond.order {
+                2 => 2,
+                3 => 3,
+                _ => 1,
             };
-
-            parent.spawn((
-                Mesh3d(bond_mesh.clone()),
-                MeshMaterial3d(bond_material.clone()),
-                Transform::from_translation((pa + pb) * 0.5)
-                    .with_rotation(rotation)
-                    .with_scale(Vec3::new(radius, length, radius)),
-                BondEntity,
-            ));
+            let lateral_base = axis_dir.cross(Vec3::Y);
+            let lateral = if lateral_base.length_squared() > 1e-5 {
+                lateral_base.normalize()
+            } else {
+                axis_dir.cross(Vec3::X).normalize_or_zero()
+            };
+            let spacing = 0.075;
+            let bond_color = match bond.order {
+                2 => Color::srgb(0.36, 0.62, 0.86),
+                3 => Color::srgb(0.88, 0.57, 0.27),
+                _ => Color::srgb(0.65, 0.68, 0.72),
+            };
+            let bond_material = bond_materials
+                .entry(bond.order)
+                .or_insert_with(|| {
+                    materials.add(StandardMaterial {
+                        base_color: bond_color,
+                        metallic: 0.0,
+                        perceptual_roughness: 0.8,
+                        ..default()
+                    })
+                })
+                .clone();
+            for idx in 0..stick_count {
+                let shift = if stick_count == 1 {
+                    0.0
+                } else if stick_count == 2 {
+                    if idx == 0 {
+                        -0.5
+                    } else {
+                        0.5
+                    }
+                } else {
+                    idx as f32 - 1.0
+                };
+                let center = (pa + pb) * 0.5 + lateral * spacing * shift;
+                parent.spawn((
+                    Mesh3d(bond_mesh.clone()),
+                    MeshMaterial3d(bond_material.clone()),
+                    Transform::from_translation(center)
+                        .with_rotation(rotation)
+                        .with_scale(Vec3::new(radius, length, radius)),
+                    BondEntity,
+                    BondOrder(bond.order),
+                ));
+            }
         }
 
         // Spawn atoms as 3D spheres
@@ -1387,6 +1457,48 @@ pub fn refresh_atoms_system(
             );
         }
     }
+}
+
+pub(crate) fn update_bond_order_legend(
+    bond_settings: Res<BondInferenceSettings>,
+    mut legend_query: Query<&mut Node, With<BondOrderLegendContainer>>,
+    mut legend_text_query: Query<&mut Text, With<BondOrderLegendText>>,
+    bond_orders: Query<&BondOrder, With<BondEntity>>,
+) {
+    let Ok(mut legend_node) = legend_query.single_mut() else {
+        return;
+    };
+    let Ok(mut legend_text) = legend_text_query.single_mut() else {
+        return;
+    };
+
+    if !bond_settings.enabled {
+        legend_node.display = Display::None;
+        return;
+    }
+
+    let mut orders = BTreeSet::new();
+    for order in &bond_orders {
+        orders.insert(order.0);
+    }
+
+    if orders.len() <= 1 {
+        legend_node.display = Display::None;
+        return;
+    }
+
+    legend_node.display = Display::Flex;
+    let labels = orders
+        .into_iter()
+        .map(|order| match order {
+            1 => "1x".to_string(),
+            2 => "2x".to_string(),
+            3 => "3x".to_string(),
+            _ => format!("{order}x"),
+        })
+        .collect::<Vec<_>>()
+        .join(", ");
+    legend_text.0 = format!("Bond orders: {labels}");
 }
 
 // Simple camera controls
