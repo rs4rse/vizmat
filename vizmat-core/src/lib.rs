@@ -14,17 +14,25 @@ pub(crate) mod ui;
 
 pub(crate) mod client;
 pub(crate) mod constants;
-pub(crate) mod parse;
+pub(crate) mod formats;
 pub(crate) mod structure;
 
 use crate::client::{poll_websocket_stream, setup_websocket_stream};
+use crate::formats::{
+    is_supported_extension, parse_structure_by_extension, SUPPORTED_EXTENSIONS_HELP,
+};
 use crate::io::{handle_file_drag_drop, load_dropped_file, update_crystal_from_file, FileDragDrop};
-use crate::parse::parse_xyz_content;
-use crate::structure::{update_crystal_system, UpdateStructure};
+use crate::structure::{
+    update_crystal_system, AtomColorMode, BondInferenceSettings, UpdateStructure,
+};
 use crate::ui::{
-    camera_controls, handle_load_default_button, refresh_atoms_system,
-    reset_camera_button_interaction, setup_cameras, setup_file_ui, setup_light,
-    sync_gizmo_axis_rotation, toggle_light_attachment, update_file_ui, update_scene,
+    apply_bond_tolerance_debounce, apply_theme_to_hud, auto_reset_view_on_crystal_change,
+    bond_tolerance_controls, camera_controls, color_mode_button, handle_load_default_button,
+    handle_open_file_button, reset_camera_button_interaction, setup_cameras, setup_file_ui,
+    setup_light, sync_atom_selection_highlight, sync_color_mode_label, sync_gizmo_axis_rotation,
+    toggle_light_attachment, toggle_theme_button, update_atom_hover_cache, update_atom_hover_label,
+    update_bond_order_legend, update_color_mode_availability, update_file_ui,
+    update_gizmo_viewport, update_scene, update_selected_atom_from_click,
 };
 use crate::ui::{setup_buttons, spawn_axis};
 
@@ -251,18 +259,20 @@ pub fn run_app() {
             dom_drop_element_id: String::from("bevy-canvas"),
         })
         .init_resource::<FileDragDrop>()
+        .init_resource::<AtomColorMode>()
+        .init_resource::<BondInferenceSettings>()
         .add_event::<UpdateStructure>()
         .add_event::<bevy::window::FileDragAndDrop>()
         .add_systems(
             Startup,
             (
                 setup_cameras,
-                spawn_axis,
                 setup_buttons,
                 setup_file_ui,
                 setup_websocket_stream,
             ),
         )
+        .add_systems(Startup, spawn_axis.after(setup_cameras))
         .add_systems(Startup, (setup_light).after(setup_cameras))
         .add_systems(
             Update,
@@ -273,13 +283,41 @@ pub fn run_app() {
                 load_dropped_file,
                 update_crystal_from_file,
                 update_file_ui,
-                refresh_atoms_system,
                 toggle_light_attachment,
-                reset_camera_button_interaction,
-                handle_load_default_button,
+            ),
+        )
+        .add_systems(Update, reset_camera_button_interaction)
+        .add_systems(Update, handle_load_default_button)
+        .add_systems(Update, handle_open_file_button)
+        .add_systems(Update, update_selected_atom_from_click)
+        .add_systems(Update, update_color_mode_availability)
+        .add_systems(
+            Update,
+            update_atom_hover_cache.after(update_color_mode_availability),
+        )
+        .add_systems(Update, color_mode_button)
+        .add_systems(Update, sync_color_mode_label.after(color_mode_button))
+        .add_systems(Update, bond_tolerance_controls)
+        .add_systems(
+            Update,
+            apply_bond_tolerance_debounce.after(bond_tolerance_controls),
+        )
+        .add_systems(Update, toggle_theme_button)
+        .add_systems(Update, apply_theme_to_hud)
+        .add_systems(
+            Update,
+            auto_reset_view_on_crystal_change.after(update_crystal_from_file),
+        )
+        .add_systems(
+            Update,
+            (
                 camera_controls,
                 sync_gizmo_axis_rotation,
+                update_gizmo_viewport,
                 update_scene,
+                sync_atom_selection_highlight.after(update_scene),
+                update_bond_order_legend.after(update_scene),
+                update_atom_hover_label.after(update_scene),
             ),
         )
         .add_observer(web_event_observer)
@@ -293,19 +331,36 @@ fn web_event_observer(trigger: Trigger<WebEvent>, mut file_drag_drop: ResMut<Fil
         mime_type,
     } = trigger.event();
 
-    if name.ends_with("xyz") {
+    let ext = name.rsplit('.').next().unwrap_or_default();
+    if is_supported_extension(ext) {
         let contents = String::from_utf8_lossy(data);
-        match parse_xyz_content(&contents) {
+        let parsed = parse_structure_by_extension(ext, &contents);
+        match parsed {
             Ok(crystal) => {
+                let atom_count = crystal.atoms.len();
+                let file_bond_count = crystal.bonds.as_ref().map_or(0, Vec::len);
                 file_drag_drop.dragged_file = None;
                 file_drag_drop.loaded_crystal = Some(crystal);
+                file_drag_drop.status_message = if file_bond_count > 0 {
+                    format!("Loaded: {name} ({atom_count} atoms, {file_bond_count} file bonds)")
+                } else {
+                    format!("Loaded: {name} ({atom_count} atoms)")
+                };
+                file_drag_drop.status_kind = crate::io::FileStatusKind::Success;
             }
             Err(e) => {
-                eprintln!("Failed to parse XYZ file: {}", e)
+                eprintln!("Failed to parse structure file: {}", e);
+                file_drag_drop.status_message = format!("Parse error: {e}");
+                file_drag_drop.status_kind = crate::io::FileStatusKind::Error;
             }
         }
     } else {
-        panic!()
+        file_drag_drop.status_message = format!(
+            "Unsupported file. Please drop {}",
+            SUPPORTED_EXTENSIONS_HELP
+        );
+        file_drag_drop.status_kind = crate::io::FileStatusKind::Error;
+        return;
     }
 
     info!("loaded file: '{name}'");
