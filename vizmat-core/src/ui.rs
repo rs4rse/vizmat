@@ -1214,6 +1214,24 @@ pub(crate) fn sync_color_mode_label(
     }
 }
 
+pub(crate) fn apply_theme_to_atom_hover_panel(
+    theme: Res<UiTheme>,
+    mut bg_query: Query<&mut BackgroundColor, With<AtomHoverPanel>>,
+    mut text_query: Query<&mut TextColor, With<AtomHoverText>>,
+) {
+    if !theme.is_changed() {
+        return;
+    }
+    let p = theme_palette(theme.mode);
+    if let Ok(mut bg) = bg_query.single_mut() {
+        bg.0 = p.scene_bg;
+    }
+
+    if let Ok(mut text_color) = text_query.single_mut() {
+        text_color.0 = p.text; // ← change text color here
+    }
+}
+
 pub(crate) fn apply_theme_to_hud(
     theme: Res<UiTheme>,
     mut clear_color: ResMut<ClearColor>,
