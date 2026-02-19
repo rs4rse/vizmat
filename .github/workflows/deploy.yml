@@ -36,6 +36,7 @@ jobs:
       - name: Install npm dependencies and build
         run: |
           cp ../../wasm/* .
+          cp ../../vizmat-app/index.html .
           npm install
           npm run build
         working-directory: vizmat-core/pkg
