@@ -1,4 +1,5 @@
 use bevy::prelude::*;
+use ccmat_core::{atomic_number_from_symbol, math::Vector3, Angstrom, MoleculeBuilder};
 use std::collections::HashMap;
 
 use crate::constants::get_covalent_radius;
@@ -7,7 +8,7 @@ use crate::constants::get_covalent_radius;
 // `#` is a macro. no inheritance. close to python decorator. injecting on top of something.
 // traits are like interfaces.
 #[derive(Debug, Clone)]
-pub struct Atom {
+pub struct Site {
     pub element: String,
     pub x: f32,
     pub y: f32,
@@ -16,12 +17,97 @@ pub struct Atom {
     pub res_name: Option<String>,
 }
 
-// Structure to hold our crystal data
 #[derive(Resource, Clone)]
-pub struct Crystal {
-    pub atoms: Vec<Atom>,
+pub(crate) struct Molecule {
+    pub(crate) inner: ccmat_core::Molecule,
     pub bonds: Option<Vec<Bond>>,
 }
+
+impl Molecule {
+    pub(crate) fn positions(&self) -> Vec<[f32; 3]> {
+        self.inner
+            .positions()
+            .iter()
+            .map(|p| p.map(|s| f64::from(s) as f32))
+            .collect()
+    }
+
+    pub(crate) fn new_from_sites(sites: &[Site]) -> Self {
+        let sites = sites
+            .iter()
+            .map(|s| {
+                // TODO: I should not rely directly on ccmat_core API call.
+                ccmat_core::SiteCartesian::new(
+                    Vector3([
+                        Angstrom::from(f64::from(s.x)),
+                        Angstrom::from(f64::from(s.y)),
+                        Angstrom::from(f64::from(s.z)),
+                    ]),
+                    atomic_number_from_symbol(&s.element).expect("not a valid symbol"),
+                )
+            })
+            .collect::<Vec<_>>();
+        let inner = MoleculeBuilder::new().with_sites(sites).build_uncheck();
+        Self { inner, bonds: None }
+    }
+
+    pub(crate) fn elements(&self) -> Vec<String> {
+        self.inner.species().iter().map(|p| p.symbol()).collect()
+    }
+
+    pub(crate) fn sites(&self) -> Vec<Site> {
+        self.positions()
+            .iter()
+            .zip(self.elements())
+            .map(|(p, e)| Site {
+                element: e,
+                x: p[0],
+                y: p[1],
+                z: p[2],
+                chain_id: None,
+                res_name: None,
+            })
+            .collect()
+    }
+
+    pub(crate) fn nsites(&self) -> usize {
+        self.positions().len()
+    }
+
+    pub(crate) fn set_bonds(&mut self, bonds: &[Bond]) {
+        self.bonds = Some(bonds.to_vec());
+    }
+
+    // pub(crate) fn set_sites(&mut self, sites: &[Site]) {
+    //     // XXX: override the inner with reallocation, performance not good
+    //     let sites = sites
+    //         .iter()
+    //         .map(|s| {
+    //             // TODO: I should not rely directly on ccmat_core API call.
+    //             ccmat_core::SiteCartesian::new(
+    //                 Vector3([
+    //                     Angstrom::from(f64::from(s.x)),
+    //                     Angstrom::from(f64::from(s.y)),
+    //                     Angstrom::from(f64::from(s.z)),
+    //                 ]),
+    //                 atomic_number_from_symbol(&s.element).expect("not a valid symbol"),
+    //             )
+    //         })
+    //         .collect::<Vec<_>>();
+    //     self.inner = MoleculeBuilder::new().with_sites(sites).build_uncheck();
+    // }
+
+    pub fn has_explicit_bonds(&self) -> bool {
+        self.bonds.as_ref().is_some_and(|b| !b.is_empty())
+    }
+}
+
+// // Structure to hold our crystal data
+// #[derive(Resource, Clone)]
+// pub struct Crystal {
+//     pub atoms: Vec<Site>,
+//     pub bonds: Option<Vec<Bond>>,
+// }
 
 #[derive(Resource, Clone, Copy)]
 pub struct BondInferenceSettings {
@@ -87,48 +173,48 @@ pub enum BondSourceMode {
 
 // Event to update the structure with new atom positions
 #[derive(Event, Clone)]
-pub struct UpdateStructure {
-    pub atoms: Vec<Atom>,
+pub struct UpdateMolecule {
+    pub inner: ccmat_core::Molecule,
 }
 
 // System to handle incoming structure updates
-pub fn update_crystal_system(
-    crystal: Option<ResMut<Crystal>>,
-    mut events: EventReader<UpdateStructure>,
+pub fn update_molecule_system(
+    mol: Option<ResMut<Molecule>>,
+    mut events: EventReader<UpdateMolecule>,
 ) {
-    if let Some(mut crystal) = crystal {
+    if let Some(mut mol) = mol {
         for event in events.read() {
-            crystal.atoms.clone_from(&event.atoms);
+            mol.inner.clone_from(&event.inner);
         }
     }
 }
 
 #[inline]
-fn bond_cutoff(a: &Atom, b: &Atom, tolerance_scale: f32) -> f32 {
+fn bond_cutoff(a: &Site, b: &Site, tolerance_scale: f32) -> f32 {
     ((get_covalent_radius(&a.element) + get_covalent_radius(&b.element)) * tolerance_scale)
         .clamp(0.4, 2.4)
 }
 
-pub fn infer_bonds_grid(crystal: &Crystal, tolerance_scale: f32) -> Vec<Bond> {
-    let atoms = &crystal.atoms;
-    if atoms.len() < 2 {
+pub fn infer_bonds_grid(mol: &Molecule, tolerance_scale: f32) -> Vec<Bond> {
+    let sites = &mol.sites();
+    if sites.len() < 2 {
         return Vec::new();
     }
 
     let mut max_radius = 0.0_f32;
-    for atom in atoms {
-        max_radius = max_radius.max(get_covalent_radius(&atom.element));
+    for site in sites {
+        max_radius = max_radius.max(get_covalent_radius(&site.element));
     }
     let cell_size = (max_radius * 2.0 * tolerance_scale).clamp(1.2, 3.0);
 
     let mut grid: HashMap<(i32, i32, i32), Vec<usize>> = HashMap::new();
-    let mut bonds = Vec::with_capacity(atoms.len().saturating_mul(2));
+    let mut bonds = Vec::with_capacity(sites.len().saturating_mul(2));
 
-    for (i, atom) in atoms.iter().enumerate() {
+    for (i, site) in sites.iter().enumerate() {
         let cell = (
-            (atom.x / cell_size).floor() as i32,
-            (atom.y / cell_size).floor() as i32,
-            (atom.z / cell_size).floor() as i32,
+            (site.x / cell_size).floor() as i32,
+            (site.y / cell_size).floor() as i32,
+            (site.z / cell_size).floor() as i32,
         );
 
         for dx in -1..=1 {
@@ -137,11 +223,11 @@ pub fn infer_bonds_grid(crystal: &Crystal, tolerance_scale: f32) -> Vec<Bond> {
                     let neighbor_cell = (cell.0 + dx, cell.1 + dy, cell.2 + dz);
                     if let Some(candidates) = grid.get(&neighbor_cell) {
                         for &j in candidates {
-                            let other = &atoms[j];
-                            let cutoff = bond_cutoff(atom, other, tolerance_scale);
-                            let ddx = atom.x - other.x;
-                            let ddy = atom.y - other.y;
-                            let ddz = atom.z - other.z;
+                            let other = &sites[j];
+                            let cutoff = bond_cutoff(site, other, tolerance_scale);
+                            let ddx = site.x - other.x;
+                            let ddy = site.y - other.y;
+                            let ddz = site.z - other.z;
                             let dist_sq = ddx * ddx + ddy * ddy + ddz * ddz;
                             if dist_sq <= cutoff * cutoff {
                                 bonds.push(Bond {
@@ -162,24 +248,18 @@ pub fn infer_bonds_grid(crystal: &Crystal, tolerance_scale: f32) -> Vec<Bond> {
     bonds
 }
 
-impl Crystal {
-    pub fn has_explicit_bonds(&self) -> bool {
-        self.bonds.as_ref().is_some_and(|b| !b.is_empty())
-    }
-}
-
 pub fn resolve_bonds(
-    crystal: &Crystal,
+    mol: &Molecule,
     settings: &BondInferenceSettings,
 ) -> (Vec<Bond>, BondSourceMode) {
     if !settings.enabled {
         return (Vec::new(), BondSourceMode::Disabled);
     }
-    if let Some(file_bonds) = crystal.bonds.as_ref().filter(|b| !b.is_empty()) {
+    if let Some(file_bonds) = mol.bonds.as_ref().filter(|b| !b.is_empty()) {
         return (file_bonds.clone(), BondSourceMode::File);
     }
     (
-        infer_bonds_grid(crystal, settings.tolerance_scale),
+        infer_bonds_grid(mol, settings.tolerance_scale),
         BondSourceMode::Inferred,
     )
 }

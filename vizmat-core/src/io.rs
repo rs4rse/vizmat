@@ -1,11 +1,12 @@
 // io.rs
 use bevy::prelude::*;
+use ccmat_core::{atomic_number, sites_cart_coord, MoleculeBuilder};
 use std::path::PathBuf;
 
 use crate::formats::{
     is_supported_extension, parse_structure_by_extension, SUPPORTED_EXTENSIONS_HELP,
 };
-use crate::structure::{Atom, Crystal};
+use crate::structure::Molecule;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum FileStatusKind {
@@ -15,47 +16,26 @@ pub(crate) enum FileStatusKind {
 }
 
 // System to load default crystal data
-pub(crate) fn load_default_crystal(mut commands: Commands) {
+pub(crate) fn load_default_molecule(mut commands: Commands) {
     println!("Loading default water molecule structure");
 
-    let crystal = Crystal {
-        atoms: vec![
-            Atom {
-                element: "O".to_string(),
-                x: 0.0,
-                y: 0.0,
-                z: 0.0,
-                chain_id: None,
-                res_name: None,
-            },
-            Atom {
-                element: "H".to_string(),
-                x: 0.757,
-                y: 0.587,
-                z: 0.0,
-                chain_id: None,
-                res_name: None,
-            },
-            Atom {
-                element: "H".to_string(),
-                x: -0.757,
-                y: 0.587,
-                z: 0.0,
-                chain_id: None,
-                res_name: None,
-            },
-        ],
-        bonds: None,
-    };
+    // TODO: this should be able to be initialized with Molecule::new directly
+    let sites = sites_cart_coord![
+        (0.0, 0.0, 0.0), atomic_number!(O);
+        (0.757, 0.587, 0.0), atomic_number!(H);
+        (-0.757, 0.587, 0.0), atomic_number!(H);
+    ];
+    let inner = MoleculeBuilder::new().with_sites(sites).build_uncheck();
+    let mol = Molecule { inner, bonds: None };
 
-    commands.insert_resource(crystal);
+    commands.insert_resource(mol);
 }
 
 // Resource to handle file drag and drop
 #[derive(Resource)]
 pub(crate) struct FileDragDrop {
     pub(crate) dragged_file: Option<PathBuf>,
-    pub(crate) loaded_crystal: Option<Crystal>,
+    pub(crate) loaded_molecule: Option<Molecule>,
     pub(crate) status_message: String,
     pub(crate) status_kind: FileStatusKind,
 }
@@ -64,7 +44,7 @@ impl Default for FileDragDrop {
     fn default() -> Self {
         Self {
             dragged_file: None,
-            loaded_crystal: None,
+            loaded_molecule: None,
             status_message: format!("Drop {} file", SUPPORTED_EXTENSIONS_HELP),
             status_kind: FileStatusKind::Info,
         }
@@ -134,11 +114,11 @@ pub(crate) fn load_dropped_file(
                         _ => Err(anyhow::anyhow!("Unsupported file extension")),
                     };
                     match parsed {
-                        Ok(crystal) => {
-                            println!("Successfully loaded crystal from: {:?}", path);
-                            let atom_count = crystal.atoms.len();
-                            let file_bond_count = crystal.bonds.as_ref().map_or(0, Vec::len);
-                            file_drag_drop.loaded_crystal = Some(crystal);
+                        Ok(mol) => {
+                            println!("Successfully loaded mol from: {:?}", path.display());
+                            let atom_count = mol.nsites();
+                            let file_bond_count = mol.bonds.as_ref().map_or(0, Vec::len);
+                            file_drag_drop.loaded_molecule = Some(mol);
                             let name = path
                                 .file_name()
                                 .and_then(|n| n.to_str())
@@ -154,14 +134,14 @@ pub(crate) fn load_dropped_file(
                             *last_loaded_path = Some(path);
                         }
                         Err(e) => {
-                            eprintln!("Failed to parse structure file: {}", e);
+                            eprintln!("Failed to parse structure file: {e}");
                             file_drag_drop.status_message = format!("Parse error: {e}");
                             file_drag_drop.status_kind = FileStatusKind::Error;
                         }
                     }
                 }
                 Err(e) => {
-                    eprintln!("Failed to read file: {}", e);
+                    eprintln!("Failed to read file: {e}");
                     file_drag_drop.status_message = format!("Read error: {e}");
                     file_drag_drop.status_kind = FileStatusKind::Error;
                 }
@@ -170,40 +150,40 @@ pub(crate) fn load_dropped_file(
     }
 }
 
-// System to update crystal resource when new file is loaded
-pub(crate) fn update_crystal_from_file(
+// System to update mol resource when new file is loaded
+pub(crate) fn update_molecule_from_file(
     mut commands: Commands,
     file_drag_drop: Res<FileDragDrop>,
-    current_crystal: Option<Res<Crystal>>,
+    current_molecule: Option<Res<Molecule>>,
 ) {
-    if let Some(crystal) = &file_drag_drop.loaded_crystal {
-        // Only update if this is a new crystal
-        if let Some(current) = current_crystal {
+    if let Some(mol) = &file_drag_drop.loaded_molecule {
+        // Only update if this is a new mol
+        if let Some(current) = current_molecule {
             let current_bond_count = current.bonds.as_ref().map_or(0, Vec::len);
-            let new_bond_count = crystal.bonds.as_ref().map_or(0, Vec::len);
-            if current.atoms.len() != crystal.atoms.len() || current_bond_count != new_bond_count {
-                commands.insert_resource(crystal.clone());
+            let new_bond_count = mol.bonds.as_ref().map_or(0, Vec::len);
+            if current.nsites() != mol.nsites() || current_bond_count != new_bond_count {
+                commands.insert_resource(mol.clone());
                 if new_bond_count > 0 {
                     println!(
-                        "Crystal updated with {} atoms and {} file bonds",
-                        crystal.atoms.len(),
+                        "Molecule updated with {} atoms and {} file bonds",
+                        mol.nsites(),
                         new_bond_count
                     );
                 } else {
-                    println!("Crystal updated with {} atoms", crystal.atoms.len());
+                    println!("Crystal updated with {} atoms", mol.nsites());
                 }
             }
         } else {
-            commands.insert_resource(crystal.clone());
-            let new_bond_count = crystal.bonds.as_ref().map_or(0, Vec::len);
+            commands.insert_resource(mol.clone());
+            let new_bond_count = mol.bonds.as_ref().map_or(0, Vec::len);
             if new_bond_count > 0 {
                 println!(
-                    "Crystal loaded with {} atoms and {} file bonds",
-                    crystal.atoms.len(),
+                    "Molecule loaded with {} atoms and {} file bonds",
+                    mol.nsites(),
                     new_bond_count
                 );
             } else {
-                println!("Crystal loaded with {} atoms", crystal.atoms.len());
+                println!("Molecule loaded with {} atoms", mol.nsites());
             }
         }
     }

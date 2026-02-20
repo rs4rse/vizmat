@@ -1,8 +1,8 @@
 use anyhow::{Context, Result};
 
-use crate::structure::{Atom, Crystal};
+use crate::structure::{Molecule, Site};
 
-pub(super) fn parse_xyz_content(contents: &str) -> Result<Crystal> {
+pub(super) fn parse_xyz_content(contents: &str) -> Result<Molecule> {
     let lines = contents.lines().collect::<Vec<&str>>();
 
     if lines.len() < 2 {
@@ -16,7 +16,7 @@ pub(super) fn parse_xyz_content(contents: &str) -> Result<Crystal> {
 
     let _comment_line = lines[1].trim();
 
-    let mut atoms = Vec::new();
+    let mut sites = Vec::new();
 
     for (i, line) in lines.iter().skip(2).enumerate() {
         if i >= num_atoms {
@@ -28,7 +28,7 @@ pub(super) fn parse_xyz_content(contents: &str) -> Result<Crystal> {
             continue;
         }
 
-        let atom = Atom {
+        let atom = Site {
             element: parts[0].to_string(),
             x: parts[1].parse().context("Failed to parse x coordinate")?,
             y: parts[2].parse().context("Failed to parse y coordinate")?,
@@ -37,8 +37,9 @@ pub(super) fn parse_xyz_content(contents: &str) -> Result<Crystal> {
             res_name: None,
         };
 
-        atoms.push(atom);
+        sites.push(atom);
     }
 
-    Ok(Crystal { atoms, bonds: None })
+    let mol = Molecule::new_from_sites(&sites);
+    Ok(mol)
 }

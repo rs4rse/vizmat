@@ -1,27 +1,52 @@
 // WebSocket client module for connecting to structure update server
 // Supports both native (async-tungstenite) and WASM (web-sys) targets
 
-use crate::structure::{Atom, UpdateStructure};
+use crate::structure::{Site, UpdateMolecule};
 use bevy::prelude::*;
+use ccmat_core::{
+    atomic_number_from_symbol, math::Vector3, Angstrom, MoleculeBuilder, MoleculeValidateError,
+};
 use crossbeam_channel::{unbounded, Receiver, Sender};
 use serde::{Deserialize, Serialize};
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
-struct AtomData {
+struct SiteData {
     element: String,
     x: f32,
     y: f32,
     z: f32,
+    chain_id: Option<String>,
+    res_name: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
 struct StructureMessage {
-    atoms: Vec<AtomData>,
+    sites: Vec<SiteData>,
 }
 
-impl From<AtomData> for Atom {
-    fn from(data: AtomData) -> Self {
-        Atom {
+impl TryFrom<StructureMessage> for UpdateMolecule {
+    type Error = MoleculeValidateError;
+
+    fn try_from(value: StructureMessage) -> std::result::Result<Self, Self::Error> {
+        // TODO: I should not rely directly on ccmat_core API call.
+        let sites = value.sites.iter().map(|s| {
+            ccmat_core::SiteCartesian::new(
+                Vector3([
+                    Angstrom::from(f64::from(s.x)),
+                    Angstrom::from(f64::from(s.y)),
+                    Angstrom::from(f64::from(s.z)),
+                ]),
+                atomic_number_from_symbol(&s.element).expect("not a valid symbol"),
+            )
+        });
+        let inner = MoleculeBuilder::new().with_sites(sites).build()?;
+        Ok(Self { inner })
+    }
+}
+
+impl From<SiteData> for Site {
+    fn from(data: SiteData) -> Self {
+        Site {
             element: data.element,
             x: data.x,
             y: data.y,
@@ -35,7 +60,7 @@ impl From<AtomData> for Atom {
 // Resource to hold the channel receiver
 #[derive(Resource)]
 pub struct WebSocketStream {
-    receiver: Receiver<UpdateStructure>,
+    receiver: Receiver<UpdateMolecule>,
 }
 
 // System to set up WebSocket connection
@@ -59,12 +84,12 @@ pub fn setup_websocket_stream(mut commands: Commands) {
 // System to poll WebSocket stream and send updates to Bevy
 pub fn poll_websocket_stream(
     stream: Res<WebSocketStream>,
-    mut events: EventWriter<UpdateStructure>,
+    mut events: EventWriter<UpdateMolecule>,
 ) {
     while let Ok(update) = stream.receiver.try_recv() {
         info!(
             "Received structure update with {} atoms",
-            update.atoms.len()
+            update.inner.positions().len()
         );
         events.write(update);
     }
@@ -72,7 +97,7 @@ pub fn poll_websocket_stream(
 
 // Native WebSocket client using async-tungstenite run on async_std runtime
 #[cfg(not(target_arch = "wasm32"))]
-fn setup_native_websocket(tx: Sender<UpdateStructure>) {
+fn setup_native_websocket(tx: Sender<UpdateMolecule>) {
     use bevy::tasks::IoTaskPool;
 
     let pool = IoTaskPool::get();
@@ -94,14 +119,15 @@ fn setup_native_websocket(tx: Sender<UpdateStructure>) {
                             if let Ok(structure_msg) =
                                 serde_json::from_str::<StructureMessage>(&text)
                             {
-                                let atoms = structure_msg
-                                    .atoms
-                                    .into_iter()
-                                    .map(std::convert::Into::into)
-                                    .collect();
+                                let Ok(update_mol): Result<UpdateMolecule, _> =
+                                    structure_msg.try_into()
+                                else {
+                                    eprintln!("invalid molecule");
+                                    continue;
+                                };
 
-                                if tx.send(UpdateStructure { atoms }).is_err() {
-                                    println!("Bevy channel closed");
+                                if tx.send(update_mol).is_err() {
+                                    eprintln!("Bevy channel closed");
                                     break;
                                 }
                             }
@@ -126,7 +152,7 @@ fn setup_native_websocket(tx: Sender<UpdateStructure>) {
 
 // WASM WebSocket client using web-sys
 #[cfg(target_arch = "wasm32")]
-fn setup_wasm_websocket(tx: Sender<UpdateStructure>) {
+fn setup_wasm_websocket(tx: Sender<UpdateMolecule>) {
     use wasm_bindgen::prelude::*;
     use wasm_bindgen::JsCast;
     use web_sys::{ErrorEvent, MessageEvent, WebSocket};
@@ -141,7 +167,7 @@ fn setup_wasm_websocket(tx: Sender<UpdateStructure>) {
             if let Ok(structure_msg) = serde_json::from_str::<StructureMessage>(&text) {
                 let atoms: Vec<Atom> = structure_msg.atoms.into_iter().map(|a| a.into()).collect();
 
-                let _ = tx_clone.send(UpdateStructure { atoms });
+                let _ = tx_clone.send(UpdateMolecule { atoms });
             }
         }
     }) as Box<dyn FnMut(MessageEvent)>);

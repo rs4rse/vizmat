@@ -16,7 +16,7 @@ use crate::formats::{
 use crate::io::FileStatusKind;
 use crate::structure::{
     resolve_bonds, AtomColorMode, AtomEntity, AtomIndex, BondEntity, BondInferenceSettings,
-    BondOrder, Crystal,
+    BondOrder, Molecule,
 };
 
 const LAYER_GIZMO: RenderLayers = RenderLayers::layer(1);
@@ -290,23 +290,23 @@ fn is_carbonyl_carbon(
 }
 
 fn compute_functional_groups(
-    crystal: &Crystal,
+    mol: &Molecule,
     bonds: &[crate::structure::Bond],
     ring_atoms: &[bool],
     bond_env_atoms: &[bool],
 ) -> Vec<FunctionalGroupClass> {
-    let atom_count = crystal.atoms.len();
-    let elements = crystal
-        .atoms
+    let nsites = mol.nsites();
+    let elements = mol
+        .sites()
         .iter()
         .map(|atom| atom.element.to_ascii_uppercase())
         .collect::<Vec<_>>();
-    let adjacency = build_bond_adjacency(atom_count, bonds);
-    let carbonyl_carbons = (0..atom_count)
+    let adjacency = build_bond_adjacency(nsites, bonds);
+    let carbonyl_carbons = (0..nsites)
         .map(|idx| is_carbonyl_carbon(idx, &elements, &adjacency))
         .collect::<Vec<_>>();
 
-    (0..atom_count)
+    (0..nsites)
         .map(|idx| {
             let el = elements[idx].as_str();
             if matches!(el, "F" | "CL" | "BR" | "I") {
@@ -441,40 +441,40 @@ fn count_unique_non_empty(values: impl Iterator<Item = Option<String>>) -> usize
 }
 
 fn compute_available_color_modes(
-    crystal: Option<&Crystal>,
+    mol: Option<&Molecule>,
     bond_settings: &BondInferenceSettings,
 ) -> Vec<AtomColorMode> {
     let mut modes = vec![AtomColorMode::Element];
-    let Some(crystal) = crystal else {
+    let Some(mol) = mol else {
         return modes;
     };
 
-    let chain_count = count_unique_non_empty(crystal.atoms.iter().map(|a| a.chain_id.clone()));
+    let chain_count = count_unique_non_empty(mol.sites().iter().map(|a| a.chain_id.clone()));
     if chain_count > 1 {
         modes.push(AtomColorMode::Chain);
     }
 
-    let residue_count = count_unique_non_empty(crystal.atoms.iter().map(|a| a.res_name.clone()));
+    let residue_count = count_unique_non_empty(mol.sites().iter().map(|a| a.res_name.clone()));
     if residue_count > 1 {
         modes.push(AtomColorMode::Residue);
     }
 
-    let (bonds, _) = resolve_bonds(crystal, bond_settings);
+    let (bonds, _) = resolve_bonds(mol, bond_settings);
     if !bonds.is_empty() {
-        let ring_atoms = compute_ring_atoms(crystal.atoms.len(), &bonds);
+        let ring_atoms = compute_ring_atoms(mol.nsites(), &bonds);
         let ring_count = ring_atoms.iter().filter(|&&v| v).count();
-        if ring_count > 0 && ring_count < crystal.atoms.len() {
+        if ring_count > 0 && ring_count < mol.nsites() {
             modes.push(AtomColorMode::Ring);
         }
 
-        let bond_env_atoms = compute_bond_env_atoms(crystal.atoms.len(), &bonds);
+        let bond_env_atoms = compute_bond_env_atoms(mol.nsites(), &bonds);
         let env_count = bond_env_atoms.iter().filter(|&&v| v).count();
-        if env_count > 0 && env_count < crystal.atoms.len() {
+        if env_count > 0 && env_count < mol.nsites() {
             modes.push(AtomColorMode::BondEnv);
         }
 
         let functional_groups =
-            compute_functional_groups(crystal, &bonds, &ring_atoms, &bond_env_atoms);
+            compute_functional_groups(mol, &bonds, &ring_atoms, &bond_env_atoms);
         let unique_groups = functional_groups.iter().copied().collect::<HashSet<_>>();
         if unique_groups.len() > 1 {
             modes.push(AtomColorMode::Functional);
@@ -485,23 +485,23 @@ fn compute_available_color_modes(
 }
 
 pub(crate) fn update_atom_hover_cache(
-    crystal: Option<Res<Crystal>>,
+    mol: Option<Res<Molecule>>,
     bond_settings: Res<BondInferenceSettings>,
     mut cache: ResMut<AtomHoverCache>,
 ) {
-    let Some(crystal) = crystal else {
+    let Some(mol) = mol else {
         cache.degree.clear();
         cache.ring_atoms.clear();
         return;
     };
 
-    if !crystal.is_changed() && !bond_settings.is_changed() {
+    if !mol.is_changed() && !bond_settings.is_changed() {
         return;
     }
 
-    let (bonds, _) = resolve_bonds(&crystal, &bond_settings);
-    cache.degree = compute_atom_degree(crystal.atoms.len(), &bonds);
-    cache.ring_atoms = compute_ring_atoms(crystal.atoms.len(), &bonds);
+    let (bonds, _) = resolve_bonds(&mol, &bond_settings);
+    cache.degree = compute_atom_degree(mol.nsites(), &bonds);
+    cache.ring_atoms = compute_ring_atoms(mol.nsites(), &bonds);
 }
 
 fn pick_atom_under_cursor(
@@ -525,17 +525,13 @@ fn pick_atom_under_cursor(
     best
 }
 
-fn format_atom_info(
-    atom_idx: usize,
-    crystal: &Crystal,
-    cache: &AtomHoverCache,
-    selected: bool,
-) -> String {
-    let Some(atom) = crystal.atoms.get(atom_idx) else {
+fn format_atom_info(idx: usize, mol: &Molecule, cache: &AtomHoverCache, selected: bool) -> String {
+    let sites = mol.sites();
+    let Some(site) = sites.get(idx) else {
         return String::new();
     };
-    let degree = cache.degree.get(atom_idx).copied().unwrap_or(0);
-    let ring = if cache.ring_atoms.get(atom_idx).copied().unwrap_or(false) {
+    let degree = cache.degree.get(idx).copied().unwrap_or(0);
+    let ring = if cache.ring_atoms.get(idx).copied().unwrap_or(false) {
         "yes"
     } else {
         "no"
@@ -544,14 +540,14 @@ fn format_atom_info(
     if selected {
         lines.push("Selected atom".to_string());
     }
-    lines.push(format!("Element: {}", atom.element));
-    lines.push(format!("Index: {}", atom_idx + 1));
+    lines.push(format!("Element: {}", site.element));
+    lines.push(format!("Index: {}", idx + 1));
     lines.push(format!("Degree: {}", degree));
     lines.push(format!("Ring: {}", ring));
-    if let Some(chain_id) = atom.chain_id.as_deref().filter(|v| !v.is_empty()) {
+    if let Some(chain_id) = site.chain_id.as_deref().filter(|v| !v.is_empty()) {
         lines.push(format!("Chain: {}", chain_id));
     }
-    if let Some(res_name) = atom.res_name.as_deref().filter(|v| !v.is_empty()) {
+    if let Some(res_name) = site.res_name.as_deref().filter(|v| !v.is_empty()) {
         lines.push(format!("Residue: {}", res_name));
     }
     lines.join("\n")
@@ -1033,7 +1029,7 @@ pub(crate) fn update_file_ui(
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn bond_tolerance_controls(
     mut settings: ResMut<BondInferenceSettings>,
-    crystal: Option<Res<Crystal>>,
+    mol: Option<Res<Molecule>>,
     mut interaction_queries: ParamSet<(
         Query<(&Interaction, &mut BackgroundColor), (Changed<Interaction>, With<BondToggleButton>)>,
         Query<(&Interaction, &RelativeCursorPosition), With<BondToleranceSliderTrack>>,
@@ -1057,7 +1053,7 @@ pub(crate) fn bond_tolerance_controls(
     let value_from_slider =
         |x_norm: f32| MIN_TOLERANCE + x_norm.clamp(0.0, 1.0) * (MAX_TOLERANCE - MIN_TOLERANCE);
     let using_file_bonds =
-        settings.enabled && crystal.as_deref().is_some_and(|c| c.has_explicit_bonds());
+        settings.enabled && mol.as_deref().is_some_and(|c| c.has_explicit_bonds());
 
     for (interaction, mut color) in &mut interaction_queries.p0() {
         match *interaction {
@@ -1188,12 +1184,12 @@ pub(crate) fn color_mode_button(
 }
 
 pub(crate) fn update_color_mode_availability(
-    crystal: Option<Res<Crystal>>,
+    mol: Option<Res<Molecule>>,
     bond_settings: Res<BondInferenceSettings>,
     mut mode: ResMut<AtomColorMode>,
     mut availability: ResMut<ColorModeAvailability>,
 ) {
-    let next_modes = compute_available_color_modes(crystal.as_deref(), &bond_settings);
+    let next_modes = compute_available_color_modes(mol.as_deref(), &bond_settings);
     if availability.modes != next_modes {
         availability.modes = next_modes;
     }
@@ -1300,13 +1296,14 @@ pub(crate) struct CameraRig {
     initial_scale: Vec3,
 }
 
-fn crystal_center_and_extents(crystal: &Crystal) -> Option<(Vec3, Vec3)> {
-    let first = crystal.atoms.first()?;
+fn molecule_center_and_extents(mol: &Molecule) -> Option<(Vec3, Vec3)> {
+    let sites = mol.sites();
+    let first = sites.first()?;
     let mut min = Vec3::new(first.x, first.y, first.z);
     let mut max = min;
 
-    for atom in &crystal.atoms {
-        let p = Vec3::new(atom.x, atom.y, atom.z);
+    for site in &mol.sites() {
+        let p = Vec3::new(site.x, site.y, site.z);
         min = min.min(p);
         max = max.max(p);
     }
@@ -1343,13 +1340,13 @@ fn apply_framed_camera_reset(
     transform: &mut Transform,
     projection: &Projection,
     rig: &mut CameraRig,
-    crystal: Option<&Crystal>,
+    mol: Option<&Molecule>,
 ) {
-    let Some(crystal) = crystal else {
+    let Some(mol) = mol else {
         apply_initial_camera_reset(transform, rig);
         return;
     };
-    let Some((center, extents)) = crystal_center_and_extents(crystal) else {
+    let Some((center, extents)) = molecule_center_and_extents(mol) else {
         apply_initial_camera_reset(transform, rig);
         return;
     };
@@ -1368,7 +1365,7 @@ fn apply_framed_camera_reset(
     transform.scale = Vec3::ONE;
 }
 
-// System to clear existing atoms when new crystal is loaded
+// System to clear existing atoms when new molecule is loaded
 #[allow(dead_code)]
 pub fn clear_old_atoms(mut commands: Commands, atom_query: Query<Entity, With<AtomEntity>>) {
     for entity in atom_query.iter() {
@@ -1384,7 +1381,7 @@ pub(crate) fn handle_load_default_button(
         (Changed<Interaction>, With<LoadDefaultButton>),
     >,
     mut commands: Commands,
-    crystal: Option<Res<Crystal>>,
+    mol: Option<Res<Molecule>>,
     theme: Res<UiTheme>,
 ) {
     for (interaction, mut color) in &mut interaction_query {
@@ -1392,8 +1389,8 @@ pub(crate) fn handle_load_default_button(
             Interaction::Pressed => {
                 *color = BackgroundColor(themed_button_bg(theme.mode, Interaction::Pressed));
                 // Load default water molecule
-                if crystal.is_none() {
-                    crate::io::load_default_crystal(commands.reborrow());
+                if mol.is_none() {
+                    crate::io::load_default_molecule(commands.reborrow());
                 }
             }
             Interaction::Hovered => {
@@ -1435,17 +1432,17 @@ pub(crate) fn handle_open_file_button(
                                     _ => Err(anyhow::anyhow!("Unsupported file extension")),
                                 };
                                 match parsed {
-                                    Ok(crystal) => {
-                                        let atom_count = crystal.atoms.len();
+                                    Ok(mol) => {
+                                        let atom_count = mol.nsites();
                                         let file_bond_count =
-                                            crystal.bonds.as_ref().map_or(0, Vec::len);
+                                            mol.bonds.as_ref().map_or(0, Vec::len);
                                         let name = path
                                             .file_name()
                                             .and_then(|n| n.to_str())
                                             .unwrap_or("structure")
                                             .to_string();
                                         file_drag_drop.dragged_file = Some(path);
-                                        file_drag_drop.loaded_crystal = Some(crystal);
+                                        file_drag_drop.loaded_molecule = Some(mol);
                                         file_drag_drop.status_message = if file_bond_count > 0 {
                                             format!(
                                                 "Loaded: {name} ({atom_count} atoms, {file_bond_count} file bonds)"
@@ -1479,13 +1476,13 @@ pub(crate) fn handle_open_file_button(
     }
 }
 
-// System to respawn atoms when crystal changes
+// System to respawn atoms when molecule changes
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn update_scene(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
-    crystal: Option<Res<Crystal>>,
+    mol: Option<Res<Molecule>>,
     bond_settings: Res<BondInferenceSettings>,
     color_mode: Res<AtomColorMode>,
     atom_query: Query<Entity, With<AtomEntity>>,
@@ -1493,8 +1490,8 @@ pub(crate) fn update_scene(
     molecule_root: Query<Entity, With<MoleculeRoot>>,
     mut last_bond_cfg: Local<Option<(bool, bool, f32, AtomColorMode)>>,
 ) {
-    if let Some(crystal) = crystal {
-        let has_file_bonds = crystal.has_explicit_bonds();
+    if let Some(mol) = mol {
+        let has_file_bonds = mol.has_explicit_bonds();
         let effective_tolerance = if has_file_bonds {
             0.0
         } else {
@@ -1512,7 +1509,7 @@ pub(crate) fn update_scene(
         };
         *last_bond_cfg = Some(current_bond_cfg);
 
-        if crystal.is_changed() || bond_cfg_changed {
+        if mol.is_changed() || bond_cfg_changed {
             // Clear existing atoms
             for entity in atom_query.iter() {
                 commands.entity(entity).despawn();
@@ -1528,7 +1525,7 @@ pub(crate) fn update_scene(
                     &mut commands,
                     &mut meshes,
                     &mut materials,
-                    &crystal,
+                    &mol,
                     &bond_settings,
                     *color_mode,
                     root_entity,
@@ -1545,7 +1542,7 @@ fn spawn_atoms(
     commands: &mut Commands,
     meshes: &mut ResMut<Assets<Mesh>>,
     materials: &mut ResMut<Assets<StandardMaterial>>,
-    crystal: &Crystal,
+    mol: &Molecule,
     bond_settings: &BondInferenceSettings,
     color_mode: AtomColorMode,
     root_entity: Entity,
@@ -1556,17 +1553,16 @@ fn spawn_atoms(
 
     // Create materials for different elements
     let mut element_materials: HashMap<String, Handle<StandardMaterial>> = HashMap::new();
-    let (bonds, _source) = resolve_bonds(crystal, bond_settings);
-    let ring_atoms = compute_ring_atoms(crystal.atoms.len(), &bonds);
-    let bond_env_atoms = compute_bond_env_atoms(crystal.atoms.len(), &bonds);
-    let functional_groups =
-        compute_functional_groups(crystal, &bonds, &ring_atoms, &bond_env_atoms);
+    let (bonds, _source) = resolve_bonds(mol, bond_settings);
+    let ring_atoms = compute_ring_atoms(mol.nsites(), &bonds);
+    let bond_env_atoms = compute_bond_env_atoms(mol.nsites(), &bonds);
+    let functional_groups = compute_functional_groups(mol, &bonds, &ring_atoms, &bond_env_atoms);
     let mut bond_materials: HashMap<u8, Handle<StandardMaterial>> = HashMap::new();
 
     commands.entity(root_entity).with_children(|parent| {
         for bond in &bonds {
-            let a = &crystal.atoms[bond.a];
-            let b = &crystal.atoms[bond.b];
+            let a = &mol.sites()[bond.a];
+            let b = &mol.sites()[bond.b];
             let pa = Vec3::new(a.x, a.y, a.z);
             let pb = Vec3::new(b.x, b.y, b.z);
             let axis = pb - pa;
@@ -1631,19 +1627,19 @@ fn spawn_atoms(
         }
 
         // Spawn atoms as 3D spheres
-        for (idx, atom) in crystal.atoms.iter().enumerate() {
+        for (idx, site) in mol.sites().iter().enumerate() {
             let atom_color = match color_mode {
-                AtomColorMode::Element => get_element_color(&atom.element),
-                AtomColorMode::Chain => atom
+                AtomColorMode::Element => get_element_color(&site.element),
+                AtomColorMode::Chain => site
                     .chain_id
                     .as_deref()
                     .map(chain_color)
-                    .unwrap_or_else(|| get_element_color(&atom.element)),
-                AtomColorMode::Residue => atom
+                    .unwrap_or_else(|| get_element_color(&site.element)),
+                AtomColorMode::Residue => site
                     .res_name
                     .as_deref()
                     .map(get_residue_class_color)
-                    .unwrap_or_else(|| get_element_color(&atom.element)),
+                    .unwrap_or_else(|| get_element_color(&site.element)),
                 AtomColorMode::Ring => {
                     if ring_atoms.get(idx).copied().unwrap_or(false) {
                         Color::srgb(0.94, 0.73, 0.22)
@@ -1666,9 +1662,9 @@ fn spawn_atoms(
                 ),
             };
             let material_key = match color_mode {
-                AtomColorMode::Element => format!("E:{}", atom.element),
-                AtomColorMode::Chain => format!("C:{}", atom.chain_id.as_deref().unwrap_or("_")),
-                AtomColorMode::Residue => format!("R:{}", atom.res_name.as_deref().unwrap_or("_")),
+                AtomColorMode::Element => format!("E:{}", site.element),
+                AtomColorMode::Chain => format!("C:{}", site.chain_id.as_deref().unwrap_or("_")),
+                AtomColorMode::Residue => format!("R:{}", site.res_name.as_deref().unwrap_or("_")),
                 AtomColorMode::Ring => {
                     let bucket = if ring_atoms.get(idx).copied().unwrap_or(false) {
                         "ring"
@@ -1711,8 +1707,8 @@ fn spawn_atoms(
             parent.spawn((
                 Mesh3d(sphere_mesh.clone()),
                 MeshMaterial3d(material),
-                Transform::from_xyz(atom.x, atom.y, atom.z)
-                    .with_scale(Vec3::splat(get_element_size(&atom.element))),
+                Transform::from_xyz(site.x, site.y, site.z)
+                    .with_scale(Vec3::splat(get_element_size(&site.element))),
                 AtomEntity,
                 AtomIndex(idx),
             ));
@@ -1965,7 +1961,7 @@ pub(crate) fn update_atom_hover_label(
     windows: Query<&Window>,
     camera_query: Query<(&Camera, &GlobalTransform), With<MainCamera>>,
     atom_query: Query<(&GlobalTransform, &AtomIndex), With<AtomEntity>>,
-    crystal: Option<Res<Crystal>>,
+    mol: Option<Res<Molecule>>,
     cache: Res<AtomHoverCache>,
     selected: Res<SelectedAtom>,
     mut panel_query: Query<&mut Node, With<AtomHoverPanel>>,
@@ -1977,15 +1973,15 @@ pub(crate) fn update_atom_hover_label(
     let Ok(mut panel_text) = text_query.single_mut() else {
         return;
     };
-    let Some(crystal) = crystal else {
+    let Some(mol) = mol else {
         panel_node.display = Display::None;
         return;
     };
 
     if let Some(selected_idx) = selected.index {
-        if selected_idx < crystal.atoms.len() {
+        if selected_idx < mol.nsites() {
             panel_node.display = Display::Flex;
-            panel_text.0 = format_atom_info(selected_idx, &crystal, &cache, true);
+            panel_text.0 = format_atom_info(selected_idx, &mol, &cache, true);
             return;
         }
     }
@@ -2016,14 +2012,14 @@ pub(crate) fn update_atom_hover_label(
     }
 
     panel_node.display = Display::Flex;
-    panel_text.0 = format_atom_info(atom_idx, &crystal, &cache, false);
+    panel_text.0 = format_atom_info(atom_idx, &mol, &cache, false);
 }
 
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn sync_atom_selection_highlight(
     mut commands: Commands,
     selected: Res<SelectedAtom>,
-    crystal: Option<Res<Crystal>>,
+    mol: Option<Res<Molecule>>,
     highlight_entities: Query<Entity, With<AtomSelectionHighlight>>,
     molecule_root: Query<Entity, With<MoleculeRoot>>,
     mut meshes: ResMut<Assets<Mesh>>,
@@ -2032,13 +2028,14 @@ pub(crate) fn sync_atom_selection_highlight(
     for entity in &highlight_entities {
         commands.entity(entity).despawn();
     }
-    let Some(crystal) = crystal else {
+    let Some(mol) = mol else {
         return;
     };
     let Some(selected_idx) = selected.index else {
         return;
     };
-    let Some(atom) = crystal.atoms.get(selected_idx) else {
+    let sites = mol.sites();
+    let Some(site) = sites.get(selected_idx) else {
         return;
     };
     let Ok(root) = molecule_root.single() else {
@@ -2056,8 +2053,8 @@ pub(crate) fn sync_atom_selection_highlight(
         parent.spawn((
             Mesh3d(mesh),
             MeshMaterial3d(mat),
-            Transform::from_xyz(atom.x, atom.y, atom.z)
-                .with_scale(Vec3::splat(get_element_size(&atom.element) * 1.45)),
+            Transform::from_xyz(site.x, site.y, site.z)
+                .with_scale(Vec3::splat(get_element_size(&site.element) * 1.45)),
             AtomSelectionHighlight,
         ));
     });
@@ -2275,16 +2272,16 @@ pub fn toggle_light_attachment(
 }
 
 pub(crate) fn auto_reset_view_on_crystal_change(
-    crystal: Option<Res<Crystal>>,
+    mol: Option<Res<Molecule>>,
     camera_entity: Option<Res<MainCameraEntity>>,
     mut camera_query: MainCameraTransformProjectionQuery<'_, '_>,
     mut camera_rig: Option<ResMut<CameraRig>>,
     mut molecule_query: Query<&mut Transform, (With<MoleculeRoot>, Without<Camera3d>)>,
 ) {
-    let Some(crystal) = crystal else {
+    let Some(mol) = mol else {
         return;
     };
-    if !crystal.is_changed() {
+    if !mol.is_changed() {
         return;
     }
     let (Some(camera_entity), Some(rig)) = (camera_entity.as_deref(), camera_rig.as_deref_mut())
@@ -2293,7 +2290,7 @@ pub(crate) fn auto_reset_view_on_crystal_change(
     };
 
     if let Ok((mut transform, projection)) = camera_query.get_mut(camera_entity.0) {
-        apply_framed_camera_reset(&mut transform, projection, rig, Some(&crystal));
+        apply_framed_camera_reset(&mut transform, projection, rig, Some(&mol));
     }
 
     if let Ok(mut molecule_transform) = molecule_query.single_mut() {
@@ -2312,7 +2309,7 @@ pub fn reset_camera_button_interaction(
     mut camera_query: MainCameraTransformProjectionQuery<'_, '_>,
     mut camera_rig: Option<ResMut<CameraRig>>,
     mut molecule_query: Query<&mut Transform, (With<MoleculeRoot>, Without<Camera3d>)>,
-    crystal: Option<Res<Crystal>>,
+    mol: Option<Res<Molecule>>,
     theme: Res<UiTheme>,
 ) {
     for (interaction, mut background) in &mut interactions {
@@ -2324,12 +2321,7 @@ pub fn reset_camera_button_interaction(
                     (camera_entity.as_deref(), camera_rig.as_deref_mut())
                 {
                     if let Ok((mut transform, projection)) = camera_query.get_mut(camera_entity.0) {
-                        apply_framed_camera_reset(
-                            &mut transform,
-                            projection,
-                            rig,
-                            crystal.as_deref(),
-                        );
+                        apply_framed_camera_reset(&mut transform, projection, rig, mol.as_deref());
                     }
                 }
                 if let Ok(mut molecule_transform) = molecule_query.single_mut() {
