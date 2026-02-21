@@ -21,6 +21,7 @@ pub struct Site {
 pub(crate) struct StructureView {
     pub(crate) inner: ccmat_core::Structure,
     pub bonds: Option<Vec<Bond>>,
+    // TODO: cache sites because sites() call do too much allocation.
 }
 
 impl StructureView {

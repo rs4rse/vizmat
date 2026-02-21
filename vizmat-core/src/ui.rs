@@ -16,7 +16,7 @@ use crate::formats::{
 use crate::io::FileStatusKind;
 use crate::structure::{
     resolve_bonds, AtomColorMode, AtomEntity, AtomIndex, BondEntity, BondInferenceSettings,
-    BondOrder, StructureView,
+    BondOrder, Site, StructureView,
 };
 
 const LAYER_GIZMO: RenderLayers = RenderLayers::layer(1);
@@ -290,14 +290,13 @@ fn is_carbonyl_carbon(
 }
 
 fn compute_functional_groups(
-    sv: &StructureView,
+    sites: &[Site],
     bonds: &[crate::structure::Bond],
     ring_atoms: &[bool],
     bond_env_atoms: &[bool],
 ) -> Vec<FunctionalGroupClass> {
-    let nsites = sv.nsites();
-    let elements = sv
-        .sites()
+    let nsites = sites.len();
+    let elements = sites
         .iter()
         .map(|atom| atom.element.to_ascii_uppercase())
         .collect::<Vec<_>>();
@@ -448,32 +447,34 @@ fn compute_available_color_modes(
     let Some(sv) = sv else {
         return modes;
     };
+    let sites = sv.sites();
 
-    let chain_count = count_unique_non_empty(sv.sites().iter().map(|a| a.chain_id.clone()));
+    let chain_count = count_unique_non_empty(sites.iter().map(|a| a.chain_id.clone()));
     if chain_count > 1 {
         modes.push(AtomColorMode::Chain);
     }
 
-    let residue_count = count_unique_non_empty(sv.sites().iter().map(|a| a.res_name.clone()));
+    let residue_count = count_unique_non_empty(sites.iter().map(|a| a.res_name.clone()));
     if residue_count > 1 {
         modes.push(AtomColorMode::Residue);
     }
 
     let (bonds, _) = resolve_bonds(sv, bond_settings);
     if !bonds.is_empty() {
-        let ring_atoms = compute_ring_atoms(sv.nsites(), &bonds);
+        let ring_atoms = compute_ring_atoms(sites.len(), &bonds);
         let ring_count = ring_atoms.iter().filter(|&&v| v).count();
-        if ring_count > 0 && ring_count < sv.nsites() {
+        if ring_count > 0 && ring_count < sites.len() {
             modes.push(AtomColorMode::Ring);
         }
 
-        let bond_env_atoms = compute_bond_env_atoms(sv.nsites(), &bonds);
+        let bond_env_atoms = compute_bond_env_atoms(sites.len(), &bonds);
         let env_count = bond_env_atoms.iter().filter(|&&v| v).count();
-        if env_count > 0 && env_count < sv.nsites() {
+        if env_count > 0 && env_count < sites.len() {
             modes.push(AtomColorMode::BondEnv);
         }
 
-        let functional_groups = compute_functional_groups(sv, &bonds, &ring_atoms, &bond_env_atoms);
+        let functional_groups =
+            compute_functional_groups(&sites, &bonds, &ring_atoms, &bond_env_atoms);
         let unique_groups = functional_groups.iter().copied().collect::<HashSet<_>>();
         if unique_groups.len() > 1 {
             modes.push(AtomColorMode::Functional);
@@ -1193,6 +1194,7 @@ pub(crate) fn update_color_mode_availability(
     mut mode: ResMut<AtomColorMode>,
     mut availability: ResMut<ColorModeAvailability>,
 ) {
+    // XXX: should this system called every frame?
     let next_modes = compute_available_color_modes(sv.as_deref(), &bond_settings);
     if availability.modes != next_modes {
         availability.modes = next_modes;
@@ -1554,18 +1556,21 @@ fn spawn_atoms(
     let sphere_mesh = meshes.add(Sphere::new(1.0));
     let bond_mesh = meshes.add(Cylinder::new(1.0, 1.0));
 
+    let sites = sv.sites();
+    let nsites = sites.len();
+
     // Create materials for different elements
     let mut element_materials: HashMap<String, Handle<StandardMaterial>> = HashMap::new();
     let (bonds, _source) = resolve_bonds(sv, bond_settings);
-    let ring_atoms = compute_ring_atoms(sv.nsites(), &bonds);
-    let bond_env_atoms = compute_bond_env_atoms(sv.nsites(), &bonds);
-    let functional_groups = compute_functional_groups(sv, &bonds, &ring_atoms, &bond_env_atoms);
+    let ring_atoms = compute_ring_atoms(nsites, &bonds);
+    let bond_env_atoms = compute_bond_env_atoms(nsites, &bonds);
+    let functional_groups = compute_functional_groups(&sites, &bonds, &ring_atoms, &bond_env_atoms);
     let mut bond_materials: HashMap<u8, Handle<StandardMaterial>> = HashMap::new();
 
     commands.entity(root_entity).with_children(|parent| {
         for bond in &bonds {
-            let a = &sv.sites()[bond.a];
-            let b = &sv.sites()[bond.b];
+            let a = &sites[bond.a];
+            let b = &sites[bond.b];
             let pa = Vec3::new(a.x, a.y, a.z);
             let pb = Vec3::new(b.x, b.y, b.z);
             let axis = pb - pa;
@@ -1630,7 +1635,7 @@ fn spawn_atoms(
         }
 
         // Spawn atoms as 3D spheres
-        for (idx, site) in sv.sites().iter().enumerate() {
+        for (idx, site) in sites.iter().enumerate() {
             let atom_color = match color_mode {
                 AtomColorMode::Element => get_element_color(&site.element),
                 AtomColorMode::Chain => site
