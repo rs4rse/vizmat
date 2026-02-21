@@ -6,7 +6,7 @@ use std::path::PathBuf;
 use crate::formats::{
     is_supported_extension, parse_structure_by_extension, SUPPORTED_EXTENSIONS_HELP,
 };
-use crate::structure::Molecule;
+use crate::structure::StructureView;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum FileStatusKind {
@@ -15,8 +15,8 @@ pub(crate) enum FileStatusKind {
     Error,
 }
 
-// System to load default crystal data
-pub(crate) fn load_default_molecule(mut commands: Commands) {
+// System to load default structure data
+pub(crate) fn load_default_structure(mut commands: Commands) {
     println!("Loading default water molecule structure");
 
     // TODO: this should be able to be initialized with Molecule::new directly
@@ -25,17 +25,20 @@ pub(crate) fn load_default_molecule(mut commands: Commands) {
         (0.757, 0.587, 0.0), atomic_number!(H);
         (-0.757, 0.587, 0.0), atomic_number!(H);
     ];
-    let inner = MoleculeBuilder::new().with_sites(sites).build_uncheck();
-    let mol = Molecule { inner, bonds: None };
+    let mol = MoleculeBuilder::new().with_sites(sites).build_uncheck();
+    let s = StructureView {
+        inner: ccmat_core::Structure::Molecule(mol),
+        bonds: None,
+    };
 
-    commands.insert_resource(mol);
+    commands.insert_resource(s);
 }
 
 // Resource to handle file drag and drop
 #[derive(Resource)]
 pub(crate) struct FileDragDrop {
     pub(crate) dragged_file: Option<PathBuf>,
-    pub(crate) loaded_molecule: Option<Molecule>,
+    pub(crate) loaded_structure: Option<StructureView>,
     pub(crate) status_message: String,
     pub(crate) status_kind: FileStatusKind,
 }
@@ -44,7 +47,7 @@ impl Default for FileDragDrop {
     fn default() -> Self {
         Self {
             dragged_file: None,
-            loaded_molecule: None,
+            loaded_structure: None,
             status_message: format!("Drop {} file", SUPPORTED_EXTENSIONS_HELP),
             status_kind: FileStatusKind::Info,
         }
@@ -114,11 +117,11 @@ pub(crate) fn load_dropped_file(
                         _ => Err(anyhow::anyhow!("Unsupported file extension")),
                     };
                     match parsed {
-                        Ok(mol) => {
-                            println!("Successfully loaded mol from: {:?}", path.display());
-                            let atom_count = mol.nsites();
-                            let file_bond_count = mol.bonds.as_ref().map_or(0, Vec::len);
-                            file_drag_drop.loaded_molecule = Some(mol);
+                        Ok(s) => {
+                            println!("Successfully loaded structure from: {:?}", path.display());
+                            let atom_count = s.nsites();
+                            let file_bond_count = s.bonds.as_ref().map_or(0, Vec::len);
+                            file_drag_drop.loaded_structure = Some(s);
                             let name = path
                                 .file_name()
                                 .and_then(|n| n.to_str())
@@ -150,40 +153,40 @@ pub(crate) fn load_dropped_file(
     }
 }
 
-// System to update mol resource when new file is loaded
-pub(crate) fn update_molecule_from_file(
+// System to update structure resource when new file is loaded
+pub(crate) fn update_structure_from_file(
     mut commands: Commands,
     file_drag_drop: Res<FileDragDrop>,
-    current_molecule: Option<Res<Molecule>>,
+    current_structure: Option<Res<StructureView>>,
 ) {
-    if let Some(mol) = &file_drag_drop.loaded_molecule {
-        // Only update if this is a new mol
-        if let Some(current) = current_molecule {
+    if let Some(s) = &file_drag_drop.loaded_structure {
+        // Only update if this is a new structure
+        if let Some(current) = current_structure {
             let current_bond_count = current.bonds.as_ref().map_or(0, Vec::len);
-            let new_bond_count = mol.bonds.as_ref().map_or(0, Vec::len);
-            if current.nsites() != mol.nsites() || current_bond_count != new_bond_count {
-                commands.insert_resource(mol.clone());
+            let new_bond_count = s.bonds.as_ref().map_or(0, Vec::len);
+            if current.nsites() != s.nsites() || current_bond_count != new_bond_count {
+                commands.insert_resource(s.clone());
                 if new_bond_count > 0 {
                     println!(
-                        "Molecule updated with {} atoms and {} file bonds",
-                        mol.nsites(),
+                        "Structure updated with {} atoms and {} file bonds",
+                        s.nsites(),
                         new_bond_count
                     );
                 } else {
-                    println!("Crystal updated with {} atoms", mol.nsites());
+                    println!("Crystal updated with {} atoms", s.nsites());
                 }
             }
         } else {
-            commands.insert_resource(mol.clone());
-            let new_bond_count = mol.bonds.as_ref().map_or(0, Vec::len);
+            commands.insert_resource(s.clone());
+            let new_bond_count = s.bonds.as_ref().map_or(0, Vec::len);
             if new_bond_count > 0 {
                 println!(
-                    "Molecule loaded with {} atoms and {} file bonds",
-                    mol.nsites(),
+                    "Structure loaded with {} atoms and {} file bonds",
+                    s.nsites(),
                     new_bond_count
                 );
             } else {
-                println!("Molecule loaded with {} atoms", mol.nsites());
+                println!("Structure loaded with {} atoms", s.nsites());
             }
         }
     }

@@ -1,9 +1,10 @@
 use anyhow::{Context, Result};
+use ccmat_core::{atomic_number_from_symbol, math::Vector3, Angstrom, MoleculeBuilder};
 
-use crate::structure::{Molecule, Site};
+use crate::structure::{Site, StructureView};
 
-pub(super) fn parse_sdf_content(contents: &str) -> Result<Molecule> {
-    let first_record = contents.split("$$$$").next().unwrap_or(contents);
+pub(super) fn parse_sdf_content(content: &str) -> Result<StructureView> {
+    let first_record = content.split("$$$$").next().unwrap_or(content);
     let lines: Vec<&str> = first_record.lines().collect();
 
     let Some((counts_line_index, counts_line)) = lines
@@ -95,10 +96,27 @@ pub(super) fn parse_sdf_content(contents: &str) -> Result<Molecule> {
         return Err(anyhow::anyhow!("SDF file contains no atoms"));
     }
 
-    let mut mol = Molecule::new_from_sites(&sites);
-    mol.set_bonds(&bonds);
+    let sites = sites
+        .iter()
+        .map(|s| {
+            // TODO: I should not rely directly on ccmat_core API call.
+            ccmat_core::SiteCartesian::new(
+                Vector3([
+                    Angstrom::from(f64::from(s.x)),
+                    Angstrom::from(f64::from(s.y)),
+                    Angstrom::from(f64::from(s.z)),
+                ]),
+                atomic_number_from_symbol(&s.element).expect("not a valid symbol"),
+            )
+        })
+        .collect::<Vec<_>>();
+    let mol = MoleculeBuilder::new().with_sites(sites).build_uncheck();
+    let s = StructureView {
+        inner: ccmat_core::Structure::Molecule(mol),
+        bonds: Some(bonds),
+    };
 
-    Ok(mol)
+    Ok(s)
 }
 
 fn parse_count_field(line: &str, range: std::ops::Range<usize>) -> Result<usize> {

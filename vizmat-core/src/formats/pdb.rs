@@ -1,11 +1,12 @@
 use anyhow::{Context, Result};
+use ccmat_core::{atomic_number_from_symbol, math::Vector3, Angstrom, MoleculeBuilder};
 
-use crate::structure::{Molecule, Site};
+use crate::structure::{Site, StructureView};
 
-pub(super) fn parse_pdb_content(contents: &str) -> Result<Molecule> {
+pub(super) fn parse_pdb_content(content: &str) -> Result<StructureView> {
     let mut sites = Vec::new();
 
-    for line in contents.lines() {
+    for line in content.lines() {
         if !(line.starts_with("ATOM  ") || line.starts_with("HETATM")) {
             continue;
         }
@@ -78,9 +79,27 @@ pub(super) fn parse_pdb_content(contents: &str) -> Result<Molecule> {
         ));
     }
 
-    let mol = Molecule::new_from_sites(&sites);
+    let sites = sites
+        .iter()
+        .map(|s| {
+            // TODO: I should not rely directly on ccmat_core API call.
+            ccmat_core::SiteCartesian::new(
+                Vector3([
+                    Angstrom::from(f64::from(s.x)),
+                    Angstrom::from(f64::from(s.y)),
+                    Angstrom::from(f64::from(s.z)),
+                ]),
+                atomic_number_from_symbol(&s.element).expect("not a valid symbol"),
+            )
+        })
+        .collect::<Vec<_>>();
+    let mol = MoleculeBuilder::new().with_sites(sites).build_uncheck();
+    let s = StructureView {
+        inner: ccmat_core::Structure::Molecule(mol),
+        bonds: None,
+    };
 
-    Ok(mol)
+    Ok(s)
 }
 
 #[cfg(test)]

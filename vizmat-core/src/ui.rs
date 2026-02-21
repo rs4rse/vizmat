@@ -16,7 +16,7 @@ use crate::formats::{
 use crate::io::FileStatusKind;
 use crate::structure::{
     resolve_bonds, AtomColorMode, AtomEntity, AtomIndex, BondEntity, BondInferenceSettings,
-    BondOrder, Molecule,
+    BondOrder, StructureView,
 };
 
 const LAYER_GIZMO: RenderLayers = RenderLayers::layer(1);
@@ -28,7 +28,7 @@ const GIZMO_VIEWPORT_MARGIN_PX: u32 = 10;
 pub(crate) struct MainCamera;
 
 #[derive(Component)]
-pub(crate) struct MoleculeRoot;
+pub(crate) struct StructureRoot;
 
 #[derive(Component)]
 pub(crate) struct GizmoAxisRoot;
@@ -290,13 +290,13 @@ fn is_carbonyl_carbon(
 }
 
 fn compute_functional_groups(
-    mol: &Molecule,
+    sv: &StructureView,
     bonds: &[crate::structure::Bond],
     ring_atoms: &[bool],
     bond_env_atoms: &[bool],
 ) -> Vec<FunctionalGroupClass> {
-    let nsites = mol.nsites();
-    let elements = mol
+    let nsites = sv.nsites();
+    let elements = sv
         .sites()
         .iter()
         .map(|atom| atom.element.to_ascii_uppercase())
@@ -441,40 +441,39 @@ fn count_unique_non_empty(values: impl Iterator<Item = Option<String>>) -> usize
 }
 
 fn compute_available_color_modes(
-    mol: Option<&Molecule>,
+    sv: Option<&StructureView>,
     bond_settings: &BondInferenceSettings,
 ) -> Vec<AtomColorMode> {
     let mut modes = vec![AtomColorMode::Element];
-    let Some(mol) = mol else {
+    let Some(sv) = sv else {
         return modes;
     };
 
-    let chain_count = count_unique_non_empty(mol.sites().iter().map(|a| a.chain_id.clone()));
+    let chain_count = count_unique_non_empty(sv.sites().iter().map(|a| a.chain_id.clone()));
     if chain_count > 1 {
         modes.push(AtomColorMode::Chain);
     }
 
-    let residue_count = count_unique_non_empty(mol.sites().iter().map(|a| a.res_name.clone()));
+    let residue_count = count_unique_non_empty(sv.sites().iter().map(|a| a.res_name.clone()));
     if residue_count > 1 {
         modes.push(AtomColorMode::Residue);
     }
 
-    let (bonds, _) = resolve_bonds(mol, bond_settings);
+    let (bonds, _) = resolve_bonds(sv, bond_settings);
     if !bonds.is_empty() {
-        let ring_atoms = compute_ring_atoms(mol.nsites(), &bonds);
+        let ring_atoms = compute_ring_atoms(sv.nsites(), &bonds);
         let ring_count = ring_atoms.iter().filter(|&&v| v).count();
-        if ring_count > 0 && ring_count < mol.nsites() {
+        if ring_count > 0 && ring_count < sv.nsites() {
             modes.push(AtomColorMode::Ring);
         }
 
-        let bond_env_atoms = compute_bond_env_atoms(mol.nsites(), &bonds);
+        let bond_env_atoms = compute_bond_env_atoms(sv.nsites(), &bonds);
         let env_count = bond_env_atoms.iter().filter(|&&v| v).count();
-        if env_count > 0 && env_count < mol.nsites() {
+        if env_count > 0 && env_count < sv.nsites() {
             modes.push(AtomColorMode::BondEnv);
         }
 
-        let functional_groups =
-            compute_functional_groups(mol, &bonds, &ring_atoms, &bond_env_atoms);
+        let functional_groups = compute_functional_groups(sv, &bonds, &ring_atoms, &bond_env_atoms);
         let unique_groups = functional_groups.iter().copied().collect::<HashSet<_>>();
         if unique_groups.len() > 1 {
             modes.push(AtomColorMode::Functional);
@@ -485,23 +484,23 @@ fn compute_available_color_modes(
 }
 
 pub(crate) fn update_atom_hover_cache(
-    mol: Option<Res<Molecule>>,
+    sv: Option<Res<StructureView>>,
     bond_settings: Res<BondInferenceSettings>,
     mut cache: ResMut<AtomHoverCache>,
 ) {
-    let Some(mol) = mol else {
+    let Some(sv) = sv else {
         cache.degree.clear();
         cache.ring_atoms.clear();
         return;
     };
 
-    if !mol.is_changed() && !bond_settings.is_changed() {
+    if !sv.is_changed() && !bond_settings.is_changed() {
         return;
     }
 
-    let (bonds, _) = resolve_bonds(&mol, &bond_settings);
-    cache.degree = compute_atom_degree(mol.nsites(), &bonds);
-    cache.ring_atoms = compute_ring_atoms(mol.nsites(), &bonds);
+    let (bonds, _) = resolve_bonds(&sv, &bond_settings);
+    cache.degree = compute_atom_degree(sv.nsites(), &bonds);
+    cache.ring_atoms = compute_ring_atoms(sv.nsites(), &bonds);
 }
 
 fn pick_atom_under_cursor(
@@ -525,8 +524,13 @@ fn pick_atom_under_cursor(
     best
 }
 
-fn format_atom_info(idx: usize, mol: &Molecule, cache: &AtomHoverCache, selected: bool) -> String {
-    let sites = mol.sites();
+fn format_atom_info(
+    idx: usize,
+    sv: &StructureView,
+    cache: &AtomHoverCache,
+    selected: bool,
+) -> String {
+    let sites = sv.sites();
     let Some(site) = sites.get(idx) else {
         return String::new();
     };
@@ -635,7 +639,7 @@ type MainCameraTransformProjectionQuery<'w, 's> = Query<
     'w,
     's,
     (&'static mut Transform, &'static Projection),
-    (With<Camera3d>, Without<MoleculeRoot>),
+    (With<Camera3d>, Without<StructureRoot>),
 >;
 
 type MainCameraChangedTransformQuery<'w, 's> = Query<
@@ -1029,7 +1033,7 @@ pub(crate) fn update_file_ui(
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn bond_tolerance_controls(
     mut settings: ResMut<BondInferenceSettings>,
-    mol: Option<Res<Molecule>>,
+    sv: Option<Res<StructureView>>,
     mut interaction_queries: ParamSet<(
         Query<(&Interaction, &mut BackgroundColor), (Changed<Interaction>, With<BondToggleButton>)>,
         Query<(&Interaction, &RelativeCursorPosition), With<BondToleranceSliderTrack>>,
@@ -1053,7 +1057,7 @@ pub(crate) fn bond_tolerance_controls(
     let value_from_slider =
         |x_norm: f32| MIN_TOLERANCE + x_norm.clamp(0.0, 1.0) * (MAX_TOLERANCE - MIN_TOLERANCE);
     let using_file_bonds =
-        settings.enabled && mol.as_deref().is_some_and(|c| c.has_explicit_bonds());
+        settings.enabled && sv.as_deref().is_some_and(|c| c.has_explicit_bonds());
 
     for (interaction, mut color) in &mut interaction_queries.p0() {
         match *interaction {
@@ -1184,12 +1188,12 @@ pub(crate) fn color_mode_button(
 }
 
 pub(crate) fn update_color_mode_availability(
-    mol: Option<Res<Molecule>>,
+    sv: Option<Res<StructureView>>,
     bond_settings: Res<BondInferenceSettings>,
     mut mode: ResMut<AtomColorMode>,
     mut availability: ResMut<ColorModeAvailability>,
 ) {
-    let next_modes = compute_available_color_modes(mol.as_deref(), &bond_settings);
+    let next_modes = compute_available_color_modes(sv.as_deref(), &bond_settings);
     if availability.modes != next_modes {
         availability.modes = next_modes;
     }
@@ -1296,13 +1300,13 @@ pub(crate) struct CameraRig {
     initial_scale: Vec3,
 }
 
-fn molecule_center_and_extents(mol: &Molecule) -> Option<(Vec3, Vec3)> {
-    let sites = mol.sites();
+fn structure_center_and_extents(sv: &StructureView) -> Option<(Vec3, Vec3)> {
+    let sites = sv.sites();
     let first = sites.first()?;
     let mut min = Vec3::new(first.x, first.y, first.z);
     let mut max = min;
 
-    for site in &mol.sites() {
+    for site in &sv.sites() {
         let p = Vec3::new(site.x, site.y, site.z);
         min = min.min(p);
         max = max.max(p);
@@ -1340,13 +1344,13 @@ fn apply_framed_camera_reset(
     transform: &mut Transform,
     projection: &Projection,
     rig: &mut CameraRig,
-    mol: Option<&Molecule>,
+    sv: Option<&StructureView>,
 ) {
-    let Some(mol) = mol else {
+    let Some(sv) = sv else {
         apply_initial_camera_reset(transform, rig);
         return;
     };
-    let Some((center, extents)) = molecule_center_and_extents(mol) else {
+    let Some((center, extents)) = structure_center_and_extents(sv) else {
         apply_initial_camera_reset(transform, rig);
         return;
     };
@@ -1365,7 +1369,7 @@ fn apply_framed_camera_reset(
     transform.scale = Vec3::ONE;
 }
 
-// System to clear existing atoms when new molecule is loaded
+// System to clear existing atoms when new structure is loaded
 #[allow(dead_code)]
 pub fn clear_old_atoms(mut commands: Commands, atom_query: Query<Entity, With<AtomEntity>>) {
     for entity in atom_query.iter() {
@@ -1381,16 +1385,16 @@ pub(crate) fn handle_load_default_button(
         (Changed<Interaction>, With<LoadDefaultButton>),
     >,
     mut commands: Commands,
-    mol: Option<Res<Molecule>>,
+    sv: Option<Res<StructureView>>,
     theme: Res<UiTheme>,
 ) {
     for (interaction, mut color) in &mut interaction_query {
         match *interaction {
             Interaction::Pressed => {
                 *color = BackgroundColor(themed_button_bg(theme.mode, Interaction::Pressed));
-                // Load default water molecule
-                if mol.is_none() {
-                    crate::io::load_default_molecule(commands.reborrow());
+                // Load default water structure
+                if sv.is_none() {
+                    crate::io::load_default_structure(commands.reborrow());
                 }
             }
             Interaction::Hovered => {
@@ -1432,17 +1436,16 @@ pub(crate) fn handle_open_file_button(
                                     _ => Err(anyhow::anyhow!("Unsupported file extension")),
                                 };
                                 match parsed {
-                                    Ok(mol) => {
-                                        let atom_count = mol.nsites();
-                                        let file_bond_count =
-                                            mol.bonds.as_ref().map_or(0, Vec::len);
+                                    Ok(sv) => {
+                                        let atom_count = sv.nsites();
+                                        let file_bond_count = sv.bonds.as_ref().map_or(0, Vec::len);
                                         let name = path
                                             .file_name()
                                             .and_then(|n| n.to_str())
                                             .unwrap_or("structure")
                                             .to_string();
                                         file_drag_drop.dragged_file = Some(path);
-                                        file_drag_drop.loaded_molecule = Some(mol);
+                                        file_drag_drop.loaded_structure = Some(sv);
                                         file_drag_drop.status_message = if file_bond_count > 0 {
                                             format!(
                                                 "Loaded: {name} ({atom_count} atoms, {file_bond_count} file bonds)"
@@ -1476,22 +1479,22 @@ pub(crate) fn handle_open_file_button(
     }
 }
 
-// System to respawn atoms when molecule changes
+// System to respawn atoms when structure changes
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn update_scene(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
-    mol: Option<Res<Molecule>>,
+    sv: Option<Res<StructureView>>,
     bond_settings: Res<BondInferenceSettings>,
     color_mode: Res<AtomColorMode>,
     atom_query: Query<Entity, With<AtomEntity>>,
     bond_query: Query<Entity, With<BondEntity>>,
-    molecule_root: Query<Entity, With<MoleculeRoot>>,
+    structure_root: Query<Entity, With<StructureRoot>>,
     mut last_bond_cfg: Local<Option<(bool, bool, f32, AtomColorMode)>>,
 ) {
-    if let Some(mol) = mol {
-        let has_file_bonds = mol.has_explicit_bonds();
+    if let Some(sv) = sv {
+        let has_file_bonds = sv.has_explicit_bonds();
         let effective_tolerance = if has_file_bonds {
             0.0
         } else {
@@ -1509,7 +1512,7 @@ pub(crate) fn update_scene(
         };
         *last_bond_cfg = Some(current_bond_cfg);
 
-        if mol.is_changed() || bond_cfg_changed {
+        if sv.is_changed() || bond_cfg_changed {
             // Clear existing atoms
             for entity in atom_query.iter() {
                 commands.entity(entity).despawn();
@@ -1520,12 +1523,12 @@ pub(crate) fn update_scene(
             }
 
             // Spawn new atoms
-            if let Ok(root_entity) = molecule_root.single() {
+            if let Ok(root_entity) = structure_root.single() {
                 spawn_atoms(
                     &mut commands,
                     &mut meshes,
                     &mut materials,
-                    &mol,
+                    &sv,
                     &bond_settings,
                     *color_mode,
                     root_entity,
@@ -1542,7 +1545,7 @@ fn spawn_atoms(
     commands: &mut Commands,
     meshes: &mut ResMut<Assets<Mesh>>,
     materials: &mut ResMut<Assets<StandardMaterial>>,
-    mol: &Molecule,
+    sv: &StructureView,
     bond_settings: &BondInferenceSettings,
     color_mode: AtomColorMode,
     root_entity: Entity,
@@ -1553,16 +1556,16 @@ fn spawn_atoms(
 
     // Create materials for different elements
     let mut element_materials: HashMap<String, Handle<StandardMaterial>> = HashMap::new();
-    let (bonds, _source) = resolve_bonds(mol, bond_settings);
-    let ring_atoms = compute_ring_atoms(mol.nsites(), &bonds);
-    let bond_env_atoms = compute_bond_env_atoms(mol.nsites(), &bonds);
-    let functional_groups = compute_functional_groups(mol, &bonds, &ring_atoms, &bond_env_atoms);
+    let (bonds, _source) = resolve_bonds(sv, bond_settings);
+    let ring_atoms = compute_ring_atoms(sv.nsites(), &bonds);
+    let bond_env_atoms = compute_bond_env_atoms(sv.nsites(), &bonds);
+    let functional_groups = compute_functional_groups(sv, &bonds, &ring_atoms, &bond_env_atoms);
     let mut bond_materials: HashMap<u8, Handle<StandardMaterial>> = HashMap::new();
 
     commands.entity(root_entity).with_children(|parent| {
         for bond in &bonds {
-            let a = &mol.sites()[bond.a];
-            let b = &mol.sites()[bond.b];
+            let a = &sv.sites()[bond.a];
+            let b = &sv.sites()[bond.b];
             let pa = Vec3::new(a.x, a.y, a.z);
             let pb = Vec3::new(b.x, b.y, b.z);
             let axis = pb - pa;
@@ -1627,7 +1630,7 @@ fn spawn_atoms(
         }
 
         // Spawn atoms as 3D spheres
-        for (idx, site) in mol.sites().iter().enumerate() {
+        for (idx, site) in sv.sites().iter().enumerate() {
             let atom_color = match color_mode {
                 AtomColorMode::Element => get_element_color(&site.element),
                 AtomColorMode::Chain => site
@@ -1740,7 +1743,7 @@ pub fn setup_cameras(mut commands: Commands, windows: Query<&Window>) {
         Visibility::default(),
         InheritedVisibility::default(),
         ViewVisibility::default(),
-        MoleculeRoot,
+        StructureRoot,
     ));
 
     // Spawn cameras
@@ -1961,7 +1964,7 @@ pub(crate) fn update_atom_hover_label(
     windows: Query<&Window>,
     camera_query: Query<(&Camera, &GlobalTransform), With<MainCamera>>,
     atom_query: Query<(&GlobalTransform, &AtomIndex), With<AtomEntity>>,
-    mol: Option<Res<Molecule>>,
+    sv: Option<Res<StructureView>>,
     cache: Res<AtomHoverCache>,
     selected: Res<SelectedAtom>,
     mut panel_query: Query<&mut Node, With<AtomHoverPanel>>,
@@ -1973,15 +1976,15 @@ pub(crate) fn update_atom_hover_label(
     let Ok(mut panel_text) = text_query.single_mut() else {
         return;
     };
-    let Some(mol) = mol else {
+    let Some(sv) = sv else {
         panel_node.display = Display::None;
         return;
     };
 
     if let Some(selected_idx) = selected.index {
-        if selected_idx < mol.nsites() {
+        if selected_idx < sv.nsites() {
             panel_node.display = Display::Flex;
-            panel_text.0 = format_atom_info(selected_idx, &mol, &cache, true);
+            panel_text.0 = format_atom_info(selected_idx, &sv, &cache, true);
             return;
         }
     }
@@ -2012,33 +2015,33 @@ pub(crate) fn update_atom_hover_label(
     }
 
     panel_node.display = Display::Flex;
-    panel_text.0 = format_atom_info(atom_idx, &mol, &cache, false);
+    panel_text.0 = format_atom_info(atom_idx, &sv, &cache, false);
 }
 
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn sync_atom_selection_highlight(
     mut commands: Commands,
     selected: Res<SelectedAtom>,
-    mol: Option<Res<Molecule>>,
+    sv: Option<Res<StructureView>>,
     highlight_entities: Query<Entity, With<AtomSelectionHighlight>>,
-    molecule_root: Query<Entity, With<MoleculeRoot>>,
+    structure_root: Query<Entity, With<StructureRoot>>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
 ) {
     for entity in &highlight_entities {
         commands.entity(entity).despawn();
     }
-    let Some(mol) = mol else {
+    let Some(sv) = sv else {
         return;
     };
     let Some(selected_idx) = selected.index else {
         return;
     };
-    let sites = mol.sites();
+    let sites = sv.sites();
     let Some(site) = sites.get(selected_idx) else {
         return;
     };
-    let Ok(root) = molecule_root.single() else {
+    let Ok(root) = structure_root.single() else {
         return;
     };
     let mesh = meshes.add(Sphere::new(1.0));
@@ -2063,7 +2066,7 @@ pub(crate) fn sync_atom_selection_highlight(
 // Simple camera controls
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn camera_controls(
-    mut camera_query: Query<&mut Transform, (With<MainCamera>, Without<MoleculeRoot>)>,
+    mut camera_query: Query<&mut Transform, (With<MainCamera>, Without<StructureRoot>)>,
     mouse_buttons: Res<ButtonInput<MouseButton>>,
     keyboard: Res<ButtonInput<KeyCode>>,
     time: Res<Time>,
@@ -2272,16 +2275,16 @@ pub fn toggle_light_attachment(
 }
 
 pub(crate) fn auto_reset_view_on_crystal_change(
-    mol: Option<Res<Molecule>>,
+    sv: Option<Res<StructureView>>,
     camera_entity: Option<Res<MainCameraEntity>>,
     mut camera_query: MainCameraTransformProjectionQuery<'_, '_>,
     mut camera_rig: Option<ResMut<CameraRig>>,
-    mut molecule_query: Query<&mut Transform, (With<MoleculeRoot>, Without<Camera3d>)>,
+    mut structure_query: Query<&mut Transform, (With<StructureRoot>, Without<Camera3d>)>,
 ) {
-    let Some(mol) = mol else {
+    let Some(sv) = sv else {
         return;
     };
-    if !mol.is_changed() {
+    if !sv.is_changed() {
         return;
     }
     let (Some(camera_entity), Some(rig)) = (camera_entity.as_deref(), camera_rig.as_deref_mut())
@@ -2290,11 +2293,11 @@ pub(crate) fn auto_reset_view_on_crystal_change(
     };
 
     if let Ok((mut transform, projection)) = camera_query.get_mut(camera_entity.0) {
-        apply_framed_camera_reset(&mut transform, projection, rig, Some(&mol));
+        apply_framed_camera_reset(&mut transform, projection, rig, Some(&sv));
     }
 
-    if let Ok(mut molecule_transform) = molecule_query.single_mut() {
-        molecule_transform.rotation = Quat::IDENTITY;
+    if let Ok(mut structure_transform) = structure_query.single_mut() {
+        structure_transform.rotation = Quat::IDENTITY;
     }
 }
 
@@ -2308,8 +2311,8 @@ pub fn reset_camera_button_interaction(
     camera_entity: Option<Res<MainCameraEntity>>,
     mut camera_query: MainCameraTransformProjectionQuery<'_, '_>,
     mut camera_rig: Option<ResMut<CameraRig>>,
-    mut molecule_query: Query<&mut Transform, (With<MoleculeRoot>, Without<Camera3d>)>,
-    mol: Option<Res<Molecule>>,
+    mut structure_query: Query<&mut Transform, (With<StructureRoot>, Without<Camera3d>)>,
+    sv: Option<Res<StructureView>>,
     theme: Res<UiTheme>,
 ) {
     for (interaction, mut background) in &mut interactions {
@@ -2321,11 +2324,11 @@ pub fn reset_camera_button_interaction(
                     (camera_entity.as_deref(), camera_rig.as_deref_mut())
                 {
                     if let Ok((mut transform, projection)) = camera_query.get_mut(camera_entity.0) {
-                        apply_framed_camera_reset(&mut transform, projection, rig, mol.as_deref());
+                        apply_framed_camera_reset(&mut transform, projection, rig, sv.as_deref());
                     }
                 }
-                if let Ok(mut molecule_transform) = molecule_query.single_mut() {
-                    molecule_transform.rotation = Quat::IDENTITY;
+                if let Ok(mut structure_transform) = structure_query.single_mut() {
+                    structure_transform.rotation = Quat::IDENTITY;
                 }
             }
             Interaction::Hovered => {

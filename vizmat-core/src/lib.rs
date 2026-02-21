@@ -22,10 +22,10 @@ use crate::formats::{
     is_supported_extension, parse_structure_by_extension, SUPPORTED_EXTENSIONS_HELP,
 };
 use crate::io::{
-    handle_file_drag_drop, load_dropped_file, update_molecule_from_file, FileDragDrop,
+    handle_file_drag_drop, load_dropped_file, update_structure_from_file, FileDragDrop,
 };
 use crate::structure::{
-    update_molecule_system, AtomColorMode, BondInferenceSettings, UpdateMolecule,
+    update_structure_system, AtomColorMode, BondInferenceSettings, UpdateStructure,
 };
 use crate::ui::{
     apply_bond_tolerance_debounce, apply_theme_to_atom_hover_panel, apply_theme_to_hud,
@@ -264,7 +264,7 @@ pub fn run_app() {
         .init_resource::<FileDragDrop>()
         .init_resource::<AtomColorMode>()
         .init_resource::<BondInferenceSettings>()
-        .add_event::<UpdateMolecule>()
+        .add_event::<UpdateStructure>()
         .add_event::<bevy::window::FileDragAndDrop>()
         .add_systems(
             Startup,
@@ -281,10 +281,10 @@ pub fn run_app() {
             Update,
             (
                 poll_websocket_stream,
-                update_molecule_system,
+                update_structure_system,
                 handle_file_drag_drop,
                 load_dropped_file,
-                update_molecule_from_file,
+                update_structure_from_file,
                 update_file_ui,
                 toggle_light_attachment,
             ),
@@ -310,7 +310,7 @@ pub fn run_app() {
         .add_systems(Update, apply_theme_to_atom_hover_panel)
         .add_systems(
             Update,
-            auto_reset_view_on_crystal_change.after(update_molecule_from_file),
+            auto_reset_view_on_crystal_change.after(update_structure_from_file),
         )
         .add_systems(
             Update,
@@ -340,11 +340,11 @@ fn web_event_observer(trigger: Trigger<WebEvent>, mut file_drag_drop: ResMut<Fil
         let contents = String::from_utf8_lossy(data);
         let parsed = parse_structure_by_extension(ext, &contents);
         match parsed {
-            Ok(mol) => {
-                let atom_count = mol.nsites();
-                let file_bond_count = mol.bonds.as_ref().map_or(0, Vec::len);
+            Ok(s) => {
+                let atom_count = s.nsites();
+                let file_bond_count = s.bonds.as_ref().map_or(0, Vec::len);
                 file_drag_drop.dragged_file = None;
-                file_drag_drop.loaded_molecule = Some(mol);
+                file_drag_drop.loaded_structure = Some(s);
                 file_drag_drop.status_message = if file_bond_count > 0 {
                     format!("Loaded: {name} ({atom_count} atoms, {file_bond_count} file bonds)")
                 } else {

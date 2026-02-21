@@ -1,5 +1,4 @@
 use bevy::prelude::*;
-use ccmat_core::{atomic_number_from_symbol, math::Vector3, Angstrom, MoleculeBuilder};
 use std::collections::HashMap;
 
 use crate::constants::get_covalent_radius;
@@ -17,38 +16,28 @@ pub struct Site {
     pub res_name: Option<String>,
 }
 
+/// Structure view, with extra bonds information to be plot in canvas.
 #[derive(Resource, Clone)]
-pub(crate) struct Molecule {
-    pub(crate) inner: ccmat_core::Molecule,
+pub(crate) struct StructureView {
+    pub(crate) inner: ccmat_core::Structure,
     pub bonds: Option<Vec<Bond>>,
 }
 
-impl Molecule {
+impl StructureView {
+    // raw positions of view in visualizer is always cartesian.
     pub(crate) fn positions(&self) -> Vec<[f32; 3]> {
-        self.inner
-            .positions()
-            .iter()
-            .map(|p| p.map(|s| f64::from(s) as f32))
-            .collect()
-    }
-
-    pub(crate) fn new_from_sites(sites: &[Site]) -> Self {
-        let sites = sites
-            .iter()
-            .map(|s| {
-                // TODO: I should not rely directly on ccmat_core API call.
-                ccmat_core::SiteCartesian::new(
-                    Vector3([
-                        Angstrom::from(f64::from(s.x)),
-                        Angstrom::from(f64::from(s.y)),
-                        Angstrom::from(f64::from(s.z)),
-                    ]),
-                    atomic_number_from_symbol(&s.element).expect("not a valid symbol"),
-                )
-            })
-            .collect::<Vec<_>>();
-        let inner = MoleculeBuilder::new().with_sites(sites).build_uncheck();
-        Self { inner, bonds: None }
+        match &self.inner {
+            ccmat_core::Structure::Crystal(inner) => inner
+                .positions()
+                .iter()
+                .map(|p| p.map(|s| f64::from(s) as f32))
+                .collect(),
+            ccmat_core::Structure::Molecule(inner) => inner
+                .positions()
+                .iter()
+                .map(|p| p.map(|s| f64::from(s) as f32))
+                .collect(),
+        }
     }
 
     pub(crate) fn elements(&self) -> Vec<String> {
@@ -74,9 +63,9 @@ impl Molecule {
         self.positions().len()
     }
 
-    pub(crate) fn set_bonds(&mut self, bonds: &[Bond]) {
-        self.bonds = Some(bonds.to_vec());
-    }
+    // pub(crate) fn set_bonds(&mut self, bonds: &[Bond]) {
+    //     self.bonds = Some(bonds.to_vec());
+    // }
 
     // pub(crate) fn set_sites(&mut self, sites: &[Site]) {
     //     // XXX: override the inner with reallocation, performance not good
@@ -173,18 +162,18 @@ pub enum BondSourceMode {
 
 // Event to update the structure with new atom positions
 #[derive(Event, Clone)]
-pub struct UpdateMolecule {
-    pub inner: ccmat_core::Molecule,
+pub struct UpdateStructure {
+    pub inner: ccmat_core::Structure,
 }
 
 // System to handle incoming structure updates
-pub fn update_molecule_system(
-    mol: Option<ResMut<Molecule>>,
-    mut events: EventReader<UpdateMolecule>,
+pub fn update_structure_system(
+    sv: Option<ResMut<StructureView>>,
+    mut events: EventReader<UpdateStructure>,
 ) {
-    if let Some(mut mol) = mol {
+    if let Some(mut sv) = sv {
         for event in events.read() {
-            mol.inner.clone_from(&event.inner);
+            sv.inner.clone_from(&event.inner);
         }
     }
 }
@@ -195,8 +184,8 @@ fn bond_cutoff(a: &Site, b: &Site, tolerance_scale: f32) -> f32 {
         .clamp(0.4, 2.4)
 }
 
-pub fn infer_bonds_grid(mol: &Molecule, tolerance_scale: f32) -> Vec<Bond> {
-    let sites = &mol.sites();
+pub fn infer_bonds_grid(sv: &StructureView, tolerance_scale: f32) -> Vec<Bond> {
+    let sites = &sv.sites();
     if sites.len() < 2 {
         return Vec::new();
     }
@@ -249,17 +238,17 @@ pub fn infer_bonds_grid(mol: &Molecule, tolerance_scale: f32) -> Vec<Bond> {
 }
 
 pub fn resolve_bonds(
-    mol: &Molecule,
+    sv: &StructureView,
     settings: &BondInferenceSettings,
 ) -> (Vec<Bond>, BondSourceMode) {
     if !settings.enabled {
         return (Vec::new(), BondSourceMode::Disabled);
     }
-    if let Some(file_bonds) = mol.bonds.as_ref().filter(|b| !b.is_empty()) {
+    if let Some(file_bonds) = sv.bonds.as_ref().filter(|b| !b.is_empty()) {
         return (file_bonds.clone(), BondSourceMode::File);
     }
     (
-        infer_bonds_grid(mol, settings.tolerance_scale),
+        infer_bonds_grid(sv, settings.tolerance_scale),
         BondSourceMode::Inferred,
     )
 }
