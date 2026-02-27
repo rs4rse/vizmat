@@ -10,9 +10,9 @@ use bevy::render::view::RenderLayers;
 use bevy::ui::RelativeCursorPosition;
 
 use crate::constants::{get_element_color, get_element_size, get_residue_class_color};
-use crate::formats::{
-    parse_structure_by_extension, SUPPORTED_EXTENSIONS, SUPPORTED_EXTENSIONS_HELP,
-};
+use crate::formats::SUPPORTED_EXTENSIONS_HELP;
+#[cfg(not(target_arch = "wasm32"))]
+use crate::formats::{parse_structure_by_extension, SUPPORTED_EXTENSIONS};
 use crate::io::FileStatusKind;
 use crate::structure::{
     resolve_bonds, AtomColorMode, AtomEntity, AtomIndex, BondEntity, BondInferenceSettings,
@@ -650,13 +650,22 @@ type MainCameraChangedTransformQuery<'w, 's> = Query<
 >;
 
 // System to set up file upload UI
-pub(crate) fn setup_file_ui(mut commands: Commands, asset_server: Res<AssetServer>) {
+pub(crate) fn setup_file_ui(mut commands: Commands, mut font_assets: ResMut<Assets<Font>>) {
     commands.insert_resource(UiTheme::default());
     commands.insert_resource(ColorModeAvailability::default());
     commands.insert_resource(AtomHoverCache::default());
     commands.insert_resource(SelectedAtom::default());
     let p = theme_palette(ThemeMode::Dark);
-    let icon_font: Handle<Font> = asset_server.load("fonts/fa-solid-900.ttf");
+    let icon_font: Handle<Font> = font_assets.add(
+        Font::try_from_bytes(
+            include_bytes!(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/../vizmat-app/assets/fonts/fa-solid-900.ttf"
+            ))
+            .to_vec(),
+        )
+        .expect("embedded Font Awesome TTF must be valid"),
+    );
     commands.insert_resource(ClearColor(p.scene_bg));
 
     commands
@@ -912,7 +921,7 @@ pub(crate) fn setup_file_ui(mut commands: Commands, asset_server: Res<AssetServe
                     ))
                     .with_children(|button| {
                         button.spawn((
-                            Text::new("\u{f186}"),
+                            Text::new("\u{23FE}"),
                             TextFont {
                                 font: icon_font.clone(),
                                 font_size: 16.0,
@@ -1149,8 +1158,8 @@ pub(crate) fn toggle_theme_button(
                 for child in children.iter() {
                     if let Ok(mut text) = texts.get_mut(child) {
                         text.0 = match theme.mode {
-                            ThemeMode::Dark => "\u{f186}".into(),
-                            ThemeMode::Light => "\u{f185}".into(),
+                            ThemeMode::Dark => "\u{23FE}".into(),
+                            ThemeMode::Light => "\u{2600}".into(),
                         };
                     }
                 }
@@ -1407,6 +1416,7 @@ pub(crate) fn handle_load_default_button(
 }
 
 #[allow(clippy::type_complexity)]
+#[cfg(not(target_arch = "wasm32"))]
 pub(crate) fn handle_open_file_button(
     mut interaction_query: Query<
         (&Interaction, &mut BackgroundColor),
@@ -1419,55 +1429,75 @@ pub(crate) fn handle_open_file_button(
         match *interaction {
             Interaction::Pressed => {
                 *color = BackgroundColor(themed_button_bg(theme.mode, Interaction::Pressed));
-                #[cfg(not(target_arch = "wasm32"))]
-                {
-                    let picked = rfd::FileDialog::new()
-                        .add_filter("Structure", SUPPORTED_EXTENSIONS)
-                        .pick_file();
-                    if let Some(path) = picked {
-                        let ext = path
-                            .extension()
-                            .map(|s| s.to_string_lossy().to_ascii_lowercase());
-                        match std::fs::read_to_string(&path) {
-                            Ok(contents) => {
-                                let parsed = match ext.as_deref() {
-                                    Some(ext) => parse_structure_by_extension(ext, &contents),
-                                    _ => Err(anyhow::anyhow!("Unsupported file extension")),
-                                };
-                                match parsed {
-                                    Ok(crystal) => {
-                                        let atom_count = crystal.atoms.len();
-                                        let file_bond_count =
-                                            crystal.bonds.as_ref().map_or(0, Vec::len);
-                                        let name = path
-                                            .file_name()
-                                            .and_then(|n| n.to_str())
-                                            .unwrap_or("structure")
-                                            .to_string();
-                                        file_drag_drop.dragged_file = Some(path);
-                                        file_drag_drop.loaded_crystal = Some(crystal);
-                                        file_drag_drop.status_message = if file_bond_count > 0 {
-                                            format!(
-                                                "Loaded: {name} ({atom_count} atoms, {file_bond_count} file bonds)"
-                                            )
-                                        } else {
-                                            format!("Loaded: {name} ({atom_count} atoms)")
-                                        };
-                                        file_drag_drop.status_kind = FileStatusKind::Success;
-                                    }
-                                    Err(e) => {
-                                        file_drag_drop.status_message = format!("Parse error: {e}");
-                                        file_drag_drop.status_kind = FileStatusKind::Error;
-                                    }
+                let picked = rfd::FileDialog::new()
+                    .add_filter("Structure", SUPPORTED_EXTENSIONS)
+                    .pick_file();
+                if let Some(path) = picked {
+                    let ext = path
+                        .extension()
+                        .map(|s| s.to_string_lossy().to_ascii_lowercase());
+                    match std::fs::read_to_string(&path) {
+                        Ok(contents) => {
+                            let parsed = match ext.as_deref() {
+                                Some(ext) => parse_structure_by_extension(ext, &contents),
+                                _ => Err(anyhow::anyhow!("Unsupported file extension")),
+                            };
+                            match parsed {
+                                Ok(crystal) => {
+                                    let atom_count = crystal.atoms.len();
+                                    let file_bond_count = crystal.bonds.as_ref().map_or(0, Vec::len);
+                                    let name = path
+                                        .file_name()
+                                        .and_then(|n| n.to_str())
+                                        .unwrap_or("structure")
+                                        .to_string();
+                                    file_drag_drop.dragged_file = Some(path);
+                                    file_drag_drop.loaded_crystal = Some(crystal);
+                                    file_drag_drop.status_message = if file_bond_count > 0 {
+                                        format!(
+                                            "Loaded: {name} ({atom_count} atoms, {file_bond_count} file bonds)"
+                                        )
+                                    } else {
+                                        format!("Loaded: {name} ({atom_count} atoms)")
+                                    };
+                                    file_drag_drop.status_kind = FileStatusKind::Success;
+                                }
+                                Err(e) => {
+                                    file_drag_drop.status_message = format!("Parse error: {e}");
+                                    file_drag_drop.status_kind = FileStatusKind::Error;
                                 }
                             }
-                            Err(e) => {
-                                file_drag_drop.status_message = format!("Read error: {e}");
-                                file_drag_drop.status_kind = FileStatusKind::Error;
-                            }
+                        }
+                        Err(e) => {
+                            file_drag_drop.status_message = format!("Read error: {e}");
+                            file_drag_drop.status_kind = FileStatusKind::Error;
                         }
                     }
                 }
+            }
+            Interaction::Hovered => {
+                *color = BackgroundColor(themed_button_bg(theme.mode, Interaction::Hovered));
+            }
+            Interaction::None => {
+                *color = BackgroundColor(themed_button_bg(theme.mode, Interaction::None));
+            }
+        }
+    }
+}
+
+#[allow(clippy::type_complexity)]
+#[cfg(target_arch = "wasm32")]
+pub(crate) fn handle_open_file_button(
+    mut interaction_query: Query<
+        (&Interaction, &mut BackgroundColor),
+        (Changed<Interaction>, With<OpenFileButton>),
+    >,
+    theme: Res<UiTheme>,
+) {
+    for (interaction, mut color) in &mut interaction_query {
+        match *interaction {
+            Interaction::Pressed => {
+                *color = BackgroundColor(themed_button_bg(theme.mode, Interaction::Pressed));
             }
             Interaction::Hovered => {
                 *color = BackgroundColor(themed_button_bg(theme.mode, Interaction::Hovered));

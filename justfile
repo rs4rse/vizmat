@@ -27,6 +27,10 @@ protein-3j3a:
 watch:
     cargo watch -x "run"
 
+wasm:
+    rustup target add wasm32-unknown-unknown --toolchain nightly-aarch64-apple-darwin
+    cd vizmat-app && PATH="$HOME/.cargo/bin:$PATH" NO_COLOR=false trunk serve --port 8082
+
 download-sdf:
     mkdir -p vizmat-app/assets/compounds
     curl -L "https://files.rcsb.org/ligands/download/NAX_ideal.sdf" -o vizmat-app/assets/compounds/NAX.sdf
