@@ -1,0 +1,3 @@
+[submodule "vizmat-app/assets/particles"]
+	path = vizmat-app/assets/particles
+	url = git@github.com:syzer/vizmat-particles.git

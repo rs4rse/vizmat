@@ -16,6 +16,18 @@ This project is an educational experiment:
 
 Contributions are welcome. This project uses Rust and Bevy. Familiarity with Rust tooling and basic CLI usage is assumed.
 
+Clone with submodules (required for particle datasets):
+
+```bash
+git clone --recurse-submodules https://github.com/rs4rse/vizmat.git
+```
+
+If you already cloned:
+
+```bash
+git submodule update --init --recursive
+```
+
 ### Windows
 
 * Install Rust via `rustup` (MSVC toolchain)
