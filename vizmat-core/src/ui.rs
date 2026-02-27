@@ -25,6 +25,7 @@ const LAYER_GIZMO: RenderLayers = RenderLayers::layer(1);
 const LAYER_CANVAS: RenderLayers = RenderLayers::layer(0);
 const GIZMO_VIEWPORT_SIZE_PX: u32 = 200;
 const GIZMO_VIEWPORT_MARGIN_PX: u32 = 10;
+const DEFAULT_PARTICLE_PATH: &str = "compounds/water.xyz";
 const EMBEDDED_PARTICLE_LIST: &str = include_str!(concat!(
     env!("CARGO_MANIFEST_DIR"),
     "/../vizmat-app/assets/particles/list.txt"
@@ -708,6 +709,10 @@ fn filtered_particle_entries(state: &ParticlePickerState) -> Vec<String> {
 
 fn embedded_particle_contents(path: &str) -> Option<&'static str> {
     match path {
+        "compounds/water.xyz" => Some(include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../vizmat-app/assets/particles/compounds/water.xyz"
+        ))),
         "compounds/ESM.sdf" => Some(include_str!(concat!(
             env!("CARGO_MANIFEST_DIR"),
             "/../vizmat-app/assets/particles/compounds/ESM.sdf"
@@ -1686,6 +1691,11 @@ pub(crate) fn refresh_particle_picker_panel(
 
     let palette = theme_palette(theme.mode);
     for path in filtered_particle_entries(&picker) {
+        let label = if path == DEFAULT_PARTICLE_PATH {
+            format!("DEFAULT · {path}")
+        } else {
+            path.clone()
+        };
         commands.entity(results_root).with_children(|parent| {
             parent
                 .spawn((
@@ -1703,7 +1713,7 @@ pub(crate) fn refresh_particle_picker_panel(
                 ))
                 .with_children(|button| {
                     button.spawn((
-                        Text::new(path),
+                        Text::new(label),
                         TextFont {
                             font_size: 11.0,
                             ..default()
