@@ -1445,7 +1445,8 @@ pub(crate) fn handle_open_file_button(
                             match parsed {
                                 Ok(crystal) => {
                                     let atom_count = crystal.atoms.len();
-                                    let file_bond_count = crystal.bonds.as_ref().map_or(0, Vec::len);
+                                    let file_bond_count =
+                                        crystal.bonds.as_ref().map_or(0, Vec::len);
                                     let name = path
                                         .file_name()
                                         .and_then(|n| n.to_str())
