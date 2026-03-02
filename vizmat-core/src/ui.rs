@@ -75,6 +75,21 @@ pub(crate) struct StartupTitleText;
 pub(crate) struct StartupHelpText;
 
 #[derive(Component)]
+pub(crate) struct StartupSecondaryHelpText;
+
+#[derive(Component)]
+pub(crate) struct StartupIconText;
+
+#[derive(Component)]
+pub(crate) struct StartupDropzonePanel;
+
+#[derive(Component)]
+pub(crate) struct StartupDropzoneSegment;
+
+#[derive(Resource, Clone)]
+pub(crate) struct IconFont(pub(crate) Handle<Font>);
+
+#[derive(Component)]
 pub(crate) struct MainCamera;
 
 #[derive(Component)]
@@ -784,6 +799,10 @@ type MainCameraChangedTransformQuery<'w, 's> = Query<
 type StartupThemeTextQueries<'w, 's> = (
     Query<'w, 's, &'static mut TextColor, With<StartupTitleText>>,
     Query<'w, 's, &'static mut TextColor, With<StartupHelpText>>,
+    Query<'w, 's, &'static mut TextColor, With<StartupSecondaryHelpText>>,
+    Query<'w, 's, &'static mut TextColor, With<StartupIconText>>,
+    Query<'w, 's, &'static mut BackgroundColor, With<StartupDropzonePanel>>,
+    Query<'w, 's, &'static mut BackgroundColor, With<StartupDropzoneSegment>>,
 );
 
 type ParticleLoadingTextQueries<'w, 's> = (
@@ -906,7 +925,12 @@ fn parse_and_store_catalog_particle(
     }
 }
 
-pub(crate) fn setup_startup_screen(mut commands: Commands) {
+pub(crate) fn setup_startup_screen(
+    mut commands: Commands,
+    icon_font: Res<IconFont>,
+    theme: Res<UiTheme>,
+) {
+    let p = theme_palette(theme.mode);
     commands
         .spawn((
             Node {
@@ -940,18 +964,168 @@ pub(crate) fn setup_startup_screen(mut commands: Commands) {
                         ..default()
                     },
                     TextLayout::new_with_justify(JustifyText::Center),
-                    TextColor(Color::WHITE),
+                    TextColor(p.text),
                     StartupTitleText,
                 ));
+                content
+                    .spawn((
+                        Node {
+                            width: Val::Percent(88.0),
+                            min_width: Val::Px(260.0),
+                            max_width: Val::Px(620.0),
+                            padding: UiRect::all(Val::Px(22.0)),
+                            flex_direction: FlexDirection::Column,
+                            align_items: AlignItems::Center,
+                            justify_content: JustifyContent::Center,
+                            row_gap: Val::Px(12.0),
+                            position_type: PositionType::Relative,
+                            ..default()
+                        },
+                        BackgroundColor(p.bar_bg_alt),
+                        StartupDropzonePanel,
+                    ))
+                    .with_children(|dropzone| {
+                        dropzone
+                            .spawn((
+                                Node {
+                                    position_type: PositionType::Absolute,
+                                    top: Val::Px(0.0),
+                                    left: Val::Px(14.0),
+                                    right: Val::Px(14.0),
+                                    height: Val::Px(2.0),
+                                    column_gap: Val::Px(8.0),
+                                    ..default()
+                                },
+                                BackgroundColor(Color::NONE),
+                            ))
+                            .with_children(|edge| {
+                                for _ in 0..8 {
+                                    edge.spawn((
+                                        Node {
+                                            flex_grow: 1.0,
+                                            height: Val::Px(2.0),
+                                            ..default()
+                                        },
+                                        BackgroundColor(p.border),
+                                        StartupDropzoneSegment,
+                                    ));
+                                }
+                            });
+
+                        dropzone
+                            .spawn((
+                                Node {
+                                    position_type: PositionType::Absolute,
+                                    bottom: Val::Px(0.0),
+                                    left: Val::Px(14.0),
+                                    right: Val::Px(14.0),
+                                    height: Val::Px(2.0),
+                                    column_gap: Val::Px(8.0),
+                                    ..default()
+                                },
+                                BackgroundColor(Color::NONE),
+                            ))
+                            .with_children(|edge| {
+                                for _ in 0..8 {
+                                    edge.spawn((
+                                        Node {
+                                            flex_grow: 1.0,
+                                            height: Val::Px(2.0),
+                                            ..default()
+                                        },
+                                        BackgroundColor(p.border),
+                                        StartupDropzoneSegment,
+                                    ));
+                                }
+                            });
+
+                        dropzone
+                            .spawn((
+                                Node {
+                                    position_type: PositionType::Absolute,
+                                    top: Val::Px(14.0),
+                                    bottom: Val::Px(14.0),
+                                    left: Val::Px(0.0),
+                                    width: Val::Px(2.0),
+                                    flex_direction: FlexDirection::Column,
+                                    row_gap: Val::Px(8.0),
+                                    ..default()
+                                },
+                                BackgroundColor(Color::NONE),
+                            ))
+                            .with_children(|edge| {
+                                for _ in 0..5 {
+                                    edge.spawn((
+                                        Node {
+                                            flex_grow: 1.0,
+                                            width: Val::Px(2.0),
+                                            ..default()
+                                        },
+                                        BackgroundColor(p.border),
+                                        StartupDropzoneSegment,
+                                    ));
+                                }
+                            });
+
+                        dropzone
+                            .spawn((
+                                Node {
+                                    position_type: PositionType::Absolute,
+                                    top: Val::Px(14.0),
+                                    bottom: Val::Px(14.0),
+                                    right: Val::Px(0.0),
+                                    width: Val::Px(2.0),
+                                    flex_direction: FlexDirection::Column,
+                                    row_gap: Val::Px(8.0),
+                                    ..default()
+                                },
+                                BackgroundColor(Color::NONE),
+                            ))
+                            .with_children(|edge| {
+                                for _ in 0..5 {
+                                    edge.spawn((
+                                        Node {
+                                            flex_grow: 1.0,
+                                            width: Val::Px(2.0),
+                                            ..default()
+                                        },
+                                        BackgroundColor(p.border),
+                                        StartupDropzoneSegment,
+                                    ));
+                                }
+                            });
+
+                        dropzone.spawn((
+                            Text::new("\u{f063}\n\u{f49e}"),
+                            TextFont {
+                                font: icon_font.0.clone(),
+                                font_size: 38.0,
+                                ..default()
+                            },
+                            TextLayout::new_with_justify(JustifyText::Center),
+                            TextColor(p.text_muted),
+                            StartupIconText,
+                        ));
+                        dropzone.spawn((
+                            Text::new("Drag and drop a file"),
+                            TextFont {
+                                font_size: 23.0,
+                                ..default()
+                            },
+                            TextLayout::new_with_justify(JustifyText::Center),
+                            TextColor(p.text),
+                            StartupHelpText,
+                        ));
+                    });
                 content.spawn((
-                    Text::new("Click: Load Particle\nor drag and drop a file to start"),
+                    Text::new("or click Load Particle"),
                     TextFont {
-                        font_size: 24.0,
+                        font_size: 16.0,
                         ..default()
                     },
                     TextLayout::new_with_justify(JustifyText::Center),
-                    TextColor(Color::WHITE),
-                    StartupHelpText,
+                    TextColor(p.text_muted),
+                    StartupSecondaryHelpText,
                 ));
             });
         });
@@ -1023,6 +1197,7 @@ pub(crate) fn setup_file_ui(mut commands: Commands, mut font_assets: ResMut<Asse
         )
         .expect("embedded Font Awesome TTF must be valid"),
     );
+    commands.insert_resource(IconFont(icon_font.clone()));
     commands.insert_resource(ClearColor(p.scene_bg));
 
     commands
@@ -1876,7 +2051,19 @@ pub(crate) fn apply_theme_to_startup_screen(
         *color = TextColor(p.text);
     }
     for mut color in &mut startup_text_queries.p1() {
+        *color = TextColor(p.text);
+    }
+    for mut color in &mut startup_text_queries.p2() {
         *color = TextColor(p.text_muted);
+    }
+    for mut color in &mut startup_text_queries.p3() {
+        *color = TextColor(p.text_muted);
+    }
+    for mut color in &mut startup_text_queries.p4() {
+        *color = BackgroundColor(p.bar_bg_alt);
+    }
+    for mut color in &mut startup_text_queries.p5() {
+        *color = BackgroundColor(p.border);
     }
 }
 
@@ -3348,6 +3535,8 @@ mod tests {
     #[test]
     fn startup_screen_spawns_hello_label() {
         let mut app = App::new();
+        app.insert_resource(UiTheme::default());
+        app.insert_resource(IconFont(Handle::<Font>::default()));
         app.add_systems(Startup, setup_startup_screen);
         app.update();
 
@@ -3396,6 +3585,8 @@ mod tests {
     fn startup_screen_is_cleaned_up_after_transition() {
         let mut app = App::new();
         app.add_plugins(bevy::state::app::StatesPlugin);
+        app.insert_resource(UiTheme::default());
+        app.insert_resource(IconFont(Handle::<Font>::default()));
         app.insert_resource(FileDragDrop::default());
         app.init_state::<AppUiState>();
         app.add_systems(OnEnter(AppUiState::Startup), setup_startup_screen);
