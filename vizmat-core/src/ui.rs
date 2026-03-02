@@ -1,6 +1,8 @@
 #![allow(clippy::needless_pass_by_value)]
 
 use std::collections::{BTreeSet, HashMap, HashSet, VecDeque};
+#[cfg(not(target_arch = "wasm32"))]
+use std::path::PathBuf;
 
 use bevy::ecs::system::SystemParam;
 use bevy::input::keyboard::{Key, KeyboardInput};
@@ -11,11 +13,17 @@ use bevy::render::camera::Viewport;
 use bevy::render::view::RenderLayers;
 use bevy::ui::FocusPolicy;
 use bevy::ui::RelativeCursorPosition;
+#[cfg(target_arch = "wasm32")]
+use gloo::net::http::Request;
+#[cfg(target_arch = "wasm32")]
+use wasm_bindgen_futures::spawn_local;
 
 use crate::constants::{get_element_color, get_element_size, get_residue_class_color};
 #[cfg(not(target_arch = "wasm32"))]
+use crate::formats::parse_structure_by_extension;
+#[cfg(not(target_arch = "wasm32"))]
 use crate::formats::SUPPORTED_EXTENSIONS;
-use crate::formats::{parse_structure_by_extension, SUPPORTED_EXTENSIONS_HELP};
+use crate::formats::SUPPORTED_EXTENSIONS_HELP;
 use crate::io::FileStatusKind;
 use crate::structure::{
     resolve_bonds, AtomColorMode, AtomEntity, AtomIndex, BondEntity, BondInferenceSettings,
@@ -27,6 +35,10 @@ const LAYER_CANVAS: RenderLayers = RenderLayers::layer(0);
 const GIZMO_VIEWPORT_SIZE_PX: u32 = 200;
 const GIZMO_VIEWPORT_MARGIN_PX: u32 = 10;
 const DEFAULT_PARTICLE_PATH: &str = "compounds/water.xyz";
+#[cfg(target_arch = "wasm32")]
+const DEFAULT_PARTICLES_ASSET_BASE_URL: &str = "assets/particles";
+const DEFAULT_PARTICLES_REMOTE_BASE_URL: &str =
+    "https://raw.githubusercontent.com/syzer/vizmat-particles/main";
 const EMBEDDED_PARTICLE_LIST: &str = include_str!(concat!(
     env!("CARGO_MANIFEST_DIR"),
     "/../vizmat-app/assets/particles/list.txt"
@@ -121,6 +133,9 @@ pub(crate) struct HudHelpText;
 
 #[derive(Component)]
 pub(crate) struct HudLegendText;
+
+#[derive(Component)]
+pub(crate) struct ParticleLoadingIndicator;
 
 #[derive(Component)]
 pub(crate) struct BondToleranceSliderTrack;
@@ -700,6 +715,11 @@ type MainCameraChangedTransformQuery<'w, 's> = Query<
     (With<MainCamera>, Without<GizmoAxisRoot>, Changed<Transform>),
 >;
 
+type StartupThemeTextQueries<'w, 's> = (
+    Query<'w, 's, &'static mut TextColor, With<StartupTitleText>>,
+    Query<'w, 's, &'static mut TextColor, With<StartupHelpText>>,
+);
+
 fn parse_embedded_particle_entries() -> Vec<String> {
     EMBEDDED_PARTICLE_LIST
         .lines()
@@ -727,77 +747,78 @@ fn filtered_particle_entries(state: &ParticlePickerState) -> Vec<String> {
         .collect()
 }
 
-fn embedded_particle_contents(path: &str) -> Option<&'static str> {
-    match path {
-        "compounds/water.xyz" => Some(include_str!(concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/../vizmat-app/assets/particles/compounds/water.xyz"
-        ))),
-        "compounds/ESM.sdf" => Some(include_str!(concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/../vizmat-app/assets/particles/compounds/ESM.sdf"
-        ))),
-        "compounds/NAX.sdf" => Some(include_str!(concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/../vizmat-app/assets/particles/compounds/NAX.sdf"
-        ))),
-        "compounds/cyclosporin_a.sdf" => Some(include_str!(concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/../vizmat-app/assets/particles/compounds/cyclosporin_a.sdf"
-        ))),
-        "compounds/esomeprazole.xyz" => Some(include_str!(concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/../vizmat-app/assets/particles/compounds/esomeprazole.xyz"
-        ))),
-        "compounds/naproxen.xyz" => Some(include_str!(concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/../vizmat-app/assets/particles/compounds/naproxen.xyz"
-        ))),
-        "compounds/vancomycin.sdf" => Some(include_str!(concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/../vizmat-app/assets/particles/compounds/vancomycin.sdf"
-        ))),
-        "proteins/3J3A.pdb" => Some(include_str!(concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/../vizmat-app/assets/particles/proteins/3J3A.pdb"
-        ))),
-        "proteins/3J3A.xyz" => Some(include_str!(concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/../vizmat-app/assets/particles/proteins/3J3A.xyz"
-        ))),
-        "proteins/4HHB.pdb" => Some(include_str!(concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/../vizmat-app/assets/particles/proteins/4HHB.pdb"
-        ))),
-        "proteins/4HHB.xyz" => Some(include_str!(concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/../vizmat-app/assets/particles/proteins/4HHB.xyz"
-        ))),
-        "proteins/4V6F.pdb" => Some(include_str!(concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/../vizmat-app/assets/particles/proteins/4V6F.pdb"
-        ))),
-        "proteins/4V6F.xyz" => Some(include_str!(concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/../vizmat-app/assets/particles/proteins/4V6F.xyz"
-        ))),
-        "proteins/6VXX.pdb" => Some(include_str!(concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/../vizmat-app/assets/particles/proteins/6VXX.pdb"
-        ))),
-        "proteins/6VXX.xyz" => Some(include_str!(concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/../vizmat-app/assets/particles/proteins/6VXX.xyz"
-        ))),
-        "proteins/7K00.pdb" => Some(include_str!(concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/../vizmat-app/assets/particles/proteins/7K00.pdb"
-        ))),
-        "proteins/7K00.xyz" => Some(include_str!(concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/../vizmat-app/assets/particles/proteins/7K00.xyz"
-        ))),
-        _ => None,
+#[cfg(not(target_arch = "wasm32"))]
+fn particles_local_dir() -> &'static str {
+    option_env!("VIZMAT_PARTICLES_LOCAL_DIR").unwrap_or(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../vizmat-app/assets/particles"
+    ))
+}
+
+#[cfg(target_arch = "wasm32")]
+fn particles_asset_base_url() -> &'static str {
+    option_env!("VIZMAT_PARTICLES_ASSET_BASE_URL").unwrap_or(DEFAULT_PARTICLES_ASSET_BASE_URL)
+}
+
+fn particles_remote_base_url() -> &'static str {
+    option_env!("VIZMAT_PARTICLES_REMOTE_BASE_URL").unwrap_or(DEFAULT_PARTICLES_REMOTE_BASE_URL)
+}
+
+fn particle_remote_url(path: &str) -> String {
+    format!("{}/{}", particles_remote_base_url(), path)
+}
+
+#[cfg(target_arch = "wasm32")]
+fn particle_local_asset_url(path: &str) -> String {
+    format!("{}/{}", particles_asset_base_url(), path)
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn particle_local_asset_path(path: &str) -> PathBuf {
+    PathBuf::from(particles_local_dir()).join(path)
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn set_catalog_loaded_status(path: &str, atom_count: usize, file_bond_count: usize) -> String {
+    let name = path.rsplit('/').next().unwrap_or(path);
+    if file_bond_count > 0 {
+        format!("Loaded: {name} ({atom_count} atoms, {file_bond_count} file bonds)")
+    } else {
+        format!("Loaded: {name} ({atom_count} atoms)")
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn parse_and_store_catalog_particle(
+    path: &str,
+    contents: &str,
+    source: &str,
+    file_drag_drop: &mut crate::io::FileDragDrop,
+) -> bool {
+    let ext = path
+        .rsplit('.')
+        .next()
+        .map(str::to_ascii_lowercase)
+        .unwrap_or_default();
+    match parse_structure_by_extension(&ext, contents) {
+        Ok(crystal) => {
+            let atom_count = crystal.atoms.len();
+            let file_bond_count = crystal.bonds.as_ref().map_or(0, Vec::len);
+            file_drag_drop.loaded_crystal = Some(crystal);
+            file_drag_drop.status_message =
+                set_catalog_loaded_status(path, atom_count, file_bond_count);
+            file_drag_drop.status_kind = FileStatusKind::Success;
+            info!(
+                "Particle picker: loaded '{path}' from {source} with {atom_count} atoms and {file_bond_count} file bonds"
+            );
+            true
+        }
+        Err(err) => {
+            warn!("Particle picker: parse error for '{path}' from {source}: {err}");
+            file_drag_drop.status_message = format!("Parse error: {err}");
+            file_drag_drop.status_kind = FileStatusKind::Error;
+            false
+        }
     }
 }
 
@@ -1129,6 +1150,17 @@ pub(crate) fn setup_file_ui(mut commands: Commands, mut font_assets: ResMut<Asse
                     FileUploadText,
                     HiddenOnStartup,
                 ));
+                right.spawn((
+                    Text::new("Loading"),
+                    TextFont {
+                        font_size: 12.0,
+                        ..default()
+                    },
+                    Visibility::Hidden,
+                    TextColor(p.text_muted),
+                    HudHelpText,
+                    ParticleLoadingIndicator,
+                ));
 
                 right
                     .spawn((
@@ -1301,18 +1333,64 @@ pub(crate) fn setup_file_ui(mut commands: Commands, mut font_assets: ResMut<Asse
 }
 
 // System to update file upload UI
+fn status_message_for_hud(status: &str, kind: FileStatusKind) -> String {
+    match kind {
+        FileStatusKind::Info => {
+            if status.starts_with("Loading:") {
+                "Loading particle...".to_string()
+            } else {
+                status.to_string()
+            }
+        }
+        FileStatusKind::Success => status.to_string(),
+        FileStatusKind::Error => {
+            if status.starts_with("Load error") {
+                "Could not load particle from remote library. Check connection and try again."
+                    .to_string()
+            } else if status.starts_with("Read error:") {
+                "Could not read particle source. Check path or network and try again.".to_string()
+            } else if status.starts_with("Parse error:") {
+                "Could not parse that structure file. Try a different file.".to_string()
+            } else if status.starts_with("Unsupported file.") {
+                format!("Unsupported file. Use {}.", SUPPORTED_EXTENSIONS_HELP)
+            } else {
+                "Load failed. Try again with another particle.".to_string()
+            }
+        }
+    }
+}
+
 pub(crate) fn update_file_ui(
     file_drag_drop: Res<crate::io::FileDragDrop>,
     theme: Res<UiTheme>,
     mut text_query: Query<(&mut Text, &mut TextColor), With<FileUploadText>>,
 ) {
     if let Ok((mut text, mut color)) = text_query.single_mut() {
-        **text = file_drag_drop.status_message.clone();
+        **text = status_message_for_hud(&file_drag_drop.status_message, file_drag_drop.status_kind);
         *color = match file_drag_drop.status_kind {
             FileStatusKind::Info => TextColor(theme_palette(theme.mode).text),
             FileStatusKind::Success => TextColor(Color::srgb(0.20, 0.72, 0.34)),
             FileStatusKind::Error => TextColor(Color::srgb(0.90, 0.20, 0.22)),
         };
+    }
+}
+
+pub(crate) fn update_particle_loading_indicator(
+    file_drag_drop: Res<crate::io::FileDragDrop>,
+    time: Res<Time>,
+    mut indicator_query: Query<(&mut Text, &mut Visibility), With<ParticleLoadingIndicator>>,
+) {
+    let Ok((mut text, mut visibility)) = indicator_query.single_mut() else {
+        return;
+    };
+    let is_loading = file_drag_drop.status_message.starts_with("Loading:");
+    if is_loading {
+        const FRAMES: [&str; 8] = ["-", "\\", "|", "/", "-", "\\", "|", "/"];
+        let frame = ((time.elapsed_secs() * 10.0) as usize) % FRAMES.len();
+        text.0 = format!("Loading {}", FRAMES[frame]);
+        *visibility = Visibility::Visible;
+    } else {
+        *visibility = Visibility::Hidden;
     }
 }
 
@@ -1570,10 +1648,7 @@ pub(crate) fn apply_theme_to_hud(
 
 pub(crate) fn apply_theme_to_startup_screen(
     theme: Res<UiTheme>,
-    mut startup_text_queries: ParamSet<(
-        Query<&mut TextColor, With<StartupTitleText>>,
-        Query<&mut TextColor, With<StartupHelpText>>,
-    )>,
+    mut startup_text_queries: ParamSet<StartupThemeTextQueries<'_, '_>>,
 ) {
     if !theme.is_changed() {
         return;
@@ -1692,34 +1767,124 @@ pub fn clear_old_atoms(mut commands: Commands, atom_query: Query<Entity, With<At
 }
 
 fn load_particle_from_catalog_path(path: &str, file_drag_drop: &mut crate::io::FileDragDrop) {
-    let Some(contents) = embedded_particle_contents(path) else {
-        file_drag_drop.status_message = format!("Missing embedded file: {path}");
-        file_drag_drop.status_kind = FileStatusKind::Error;
-        return;
-    };
-    let ext = path
-        .rsplit('.')
-        .next()
-        .map(str::to_ascii_lowercase)
-        .unwrap_or_default();
-    match parse_structure_by_extension(&ext, contents) {
-        Ok(crystal) => {
-            let atom_count = crystal.atoms.len();
-            let file_bond_count = crystal.bonds.as_ref().map_or(0, Vec::len);
-            let name = path.rsplit('/').next().unwrap_or(path);
-            file_drag_drop.loaded_crystal = Some(crystal);
-            file_drag_drop.dragged_file = None;
-            file_drag_drop.status_message = if file_bond_count > 0 {
-                format!("Loaded: {name} ({atom_count} atoms, {file_bond_count} file bonds)")
-            } else {
-                format!("Loaded: {name} ({atom_count} atoms)")
+    let name = path.rsplit('/').next().unwrap_or(path);
+    info!("Particle picker: requested load for '{path}'");
+    file_drag_drop.status_message = format!("Loading: {name}");
+    file_drag_drop.status_kind = FileStatusKind::Info;
+
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let local_path = particle_local_asset_path(path);
+        info!(
+            "Particle picker: reading local file '{}'",
+            local_path.display()
+        );
+        match std::fs::read_to_string(&local_path) {
+            Ok(contents) => {
+                if parse_and_store_catalog_particle(path, &contents, "local disk", file_drag_drop) {
+                    file_drag_drop.dragged_file = Some(local_path);
+                }
+            }
+            Err(err) => {
+                warn!(
+                    "Particle picker: read error for '{path}' at '{}': {err}",
+                    local_path.display()
+                );
+                let remote_url = particle_remote_url(path);
+                info!(
+                    "Particle picker: trying desktop remote fallback URL '{}'",
+                    remote_url
+                );
+                match reqwest::blocking::get(&remote_url) {
+                    Ok(response) => {
+                        if response.status().is_success() {
+                            match response.text() {
+                                Ok(contents) => {
+                                    if parse_and_store_catalog_particle(
+                                        path,
+                                        &contents,
+                                        "remote fallback",
+                                        file_drag_drop,
+                                    ) {
+                                        file_drag_drop.dragged_file = None;
+                                    }
+                                }
+                                Err(remote_err) => {
+                                    warn!(
+                                        "Particle picker: failed to read remote response body for '{path}': {remote_err}"
+                                    );
+                                    file_drag_drop.status_message =
+                                        format!("Load error ({name}): {remote_err}");
+                                    file_drag_drop.status_kind = FileStatusKind::Error;
+                                }
+                            }
+                        } else {
+                            let status = response.status();
+                            warn!(
+                                "Particle picker: remote fallback failed for '{path}' with status {status}"
+                            );
+                            file_drag_drop.status_message = format!(
+                                "Read error: {err}. Missing local file and remote HTTP {status}"
+                            );
+                            file_drag_drop.status_kind = FileStatusKind::Error;
+                        }
+                    }
+                    Err(remote_err) => {
+                        warn!("Particle picker: remote fallback request failed for '{path}': {remote_err}");
+                        file_drag_drop.status_message =
+                            format!("Read error: {err}. Remote fallback failed: {remote_err}");
+                        file_drag_drop.status_kind = FileStatusKind::Error;
+                    }
+                }
+            }
+        }
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    {
+        let path_owned = path.to_string();
+        info!("Particle picker: starting web fetch for '{path_owned}'");
+        spawn_local(async move {
+            let local_url = particle_local_asset_url(&path_owned);
+            let remote_url = particle_remote_url(&path_owned);
+            info!("Particle picker: trying web local URL '{}'", local_url);
+
+            async fn fetch_text(url: String) -> anyhow::Result<String> {
+                let resp = Request::get(&url).send().await?;
+                if !resp.ok() {
+                    anyhow::bail!("HTTP {} while loading {url}", resp.status());
+                }
+                let text = resp.text().await?;
+                Ok(text)
+            }
+
+            let result = match fetch_text(local_url).await {
+                Ok(text) => Ok(text),
+                Err(err) => {
+                    warn!("Particle picker: local URL failed, trying remote fallback: {err}");
+                    info!("Particle picker: trying web remote URL '{}'", remote_url);
+                    fetch_text(remote_url).await
+                }
             };
-            file_drag_drop.status_kind = FileStatusKind::Success;
-        }
-        Err(err) => {
-            file_drag_drop.status_message = format!("Parse error: {err}");
-            file_drag_drop.status_kind = FileStatusKind::Error;
-        }
+
+            match result {
+                Ok(text) => {
+                    info!("Particle picker: web fetch completed for '{path_owned}'");
+                    crate::send_event(crate::WebEvent::Drop {
+                        name: path_owned,
+                        data: text.into_bytes(),
+                        mime_type: "text/plain".to_string(),
+                    })
+                }
+                Err(err) => {
+                    warn!("Particle picker: web fetch failed for '{path_owned}': {err}");
+                    crate::send_event(crate::WebEvent::CatalogLoadError {
+                        path: path_owned,
+                        message: format!("{err}"),
+                    })
+                }
+            };
+        });
     }
 }
 
@@ -1774,6 +1939,7 @@ pub(crate) fn particle_picker_keyboard_search(
             }
             Key::Enter => {
                 if let Some(first) = filtered_particle_entries(&picker).first().cloned() {
+                    info!("Particle picker: Enter pressed, loading first match '{first}'");
                     load_particle_from_catalog_path(&first, &mut file_drag_drop);
                     picker.visible = false;
                 }
@@ -1888,6 +2054,10 @@ pub(crate) fn particle_picker_result_buttons(
         match *interaction {
             Interaction::Pressed => {
                 *background = BackgroundColor(themed_button_bg(theme.mode, Interaction::Pressed));
+                info!(
+                    "Particle picker: button pressed for '{}'",
+                    selected.path.as_str()
+                );
                 load_particle_from_catalog_path(&selected.path, &mut file_drag_drop);
                 picker.visible = false;
             }
@@ -3036,5 +3206,13 @@ mod tests {
 
         app.world_mut().resource_mut::<UiTheme>().mode = ThemeMode::Light;
         app.update();
+    }
+
+    #[test]
+    fn hud_status_message_is_user_friendly_for_errors() {
+        let msg = status_message_for_hud("Read error: missing file", FileStatusKind::Error);
+        assert!(msg.contains("Could not read particle source"));
+        let msg = status_message_for_hud("Parse error: bad token", FileStatusKind::Error);
+        assert!(msg.contains("Could not parse"));
     }
 }

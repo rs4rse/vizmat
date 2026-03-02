@@ -36,7 +36,8 @@ use crate::ui::{
     sync_color_mode_label, sync_gizmo_axis_rotation, toggle_light_attachment, toggle_theme_button,
     transition_to_running_on_structure_loaded, update_atom_hover_cache, update_atom_hover_label,
     update_bond_order_legend, update_color_mode_availability, update_file_ui,
-    update_gizmo_viewport, update_scene, update_selected_atom_from_click, AppUiState,
+    update_gizmo_viewport, update_particle_loading_indicator, update_scene,
+    update_selected_atom_from_click, AppUiState,
 };
 use crate::ui::{setup_buttons, spawn_axis};
 
@@ -71,6 +72,10 @@ pub enum WebEvent {
         name: String,
         data: Vec<u8>,
         mime_type: String,
+    },
+    CatalogLoadError {
+        path: String,
+        message: String,
     },
 }
 
@@ -297,6 +302,7 @@ pub fn run_app() {
             ),
         )
         .add_systems(Update, update_file_ui)
+        .add_systems(Update, update_particle_loading_indicator)
         .add_systems(
             Update,
             transition_to_running_on_structure_loaded.run_if(in_state(AppUiState::Startup)),
@@ -386,44 +392,54 @@ pub fn run_app() {
 }
 
 fn web_event_observer(trigger: Trigger<WebEvent>, mut file_drag_drop: ResMut<FileDragDrop>) {
-    let WebEvent::Drop {
-        name,
-        data,
-        mime_type,
-    } = trigger.event();
-
-    let ext = name.rsplit('.').next().unwrap_or_default();
-    if is_supported_extension(ext) {
-        let contents = String::from_utf8_lossy(data);
-        let parsed = parse_structure_by_extension(ext, &contents);
-        match parsed {
-            Ok(crystal) => {
-                let atom_count = crystal.atoms.len();
-                let file_bond_count = crystal.bonds.as_ref().map_or(0, Vec::len);
-                file_drag_drop.dragged_file = None;
-                file_drag_drop.loaded_crystal = Some(crystal);
-                file_drag_drop.status_message = if file_bond_count > 0 {
-                    format!("Loaded: {name} ({atom_count} atoms, {file_bond_count} file bonds)")
-                } else {
-                    format!("Loaded: {name} ({atom_count} atoms)")
-                };
-                file_drag_drop.status_kind = crate::io::FileStatusKind::Success;
-            }
-            Err(e) => {
-                eprintln!("Failed to parse structure file: {}", e);
-                file_drag_drop.status_message = format!("Parse error: {e}");
+    match trigger.event() {
+        WebEvent::Drop {
+            name,
+            data,
+            mime_type,
+        } => {
+            let ext = name.rsplit('.').next().unwrap_or_default();
+            if is_supported_extension(ext) {
+                let contents = String::from_utf8_lossy(data);
+                let parsed = parse_structure_by_extension(ext, &contents);
+                match parsed {
+                    Ok(crystal) => {
+                        let atom_count = crystal.atoms.len();
+                        let file_bond_count = crystal.bonds.as_ref().map_or(0, Vec::len);
+                        file_drag_drop.dragged_file = None;
+                        file_drag_drop.loaded_crystal = Some(crystal);
+                        file_drag_drop.status_message = if file_bond_count > 0 {
+                            format!(
+                                "Loaded: {name} ({atom_count} atoms, {file_bond_count} file bonds)"
+                            )
+                        } else {
+                            format!("Loaded: {name} ({atom_count} atoms)")
+                        };
+                        file_drag_drop.status_kind = crate::io::FileStatusKind::Success;
+                    }
+                    Err(e) => {
+                        eprintln!("Failed to parse structure file: {}", e);
+                        file_drag_drop.status_message = format!("Parse error: {e}");
+                        file_drag_drop.status_kind = crate::io::FileStatusKind::Error;
+                    }
+                }
+            } else {
+                file_drag_drop.status_message = format!(
+                    "Unsupported file. Please drop {}",
+                    SUPPORTED_EXTENSIONS_HELP
+                );
                 file_drag_drop.status_kind = crate::io::FileStatusKind::Error;
+                return;
             }
-        }
-    } else {
-        file_drag_drop.status_message = format!(
-            "Unsupported file. Please drop {}",
-            SUPPORTED_EXTENSIONS_HELP
-        );
-        file_drag_drop.status_kind = crate::io::FileStatusKind::Error;
-        return;
-    }
 
-    info!("loaded file: '{name}'");
-    info!("loaded file mime type: '{mime_type}'");
+            info!("loaded file: '{name}'");
+            info!("loaded file mime type: '{mime_type}'");
+        }
+        WebEvent::CatalogLoadError { path, message } => {
+            let name = path.rsplit('/').next().unwrap_or(path);
+            file_drag_drop.status_message = format!("Load error ({name}): {message}");
+            file_drag_drop.status_kind = crate::io::FileStatusKind::Error;
+            eprintln!("Failed to load catalog particle '{path}': {message}");
+        }
+    }
 }
