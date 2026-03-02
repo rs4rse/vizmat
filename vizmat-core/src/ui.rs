@@ -155,6 +155,7 @@ pub(crate) struct CatalogLoadResult {
 
 #[derive(Resource, Clone)]
 pub(crate) struct CatalogLoadChannel {
+    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
     sender: Sender<CatalogLoadResult>,
     receiver: Receiver<CatalogLoadResult>,
 }
@@ -167,6 +168,7 @@ impl Default for CatalogLoadChannel {
 }
 
 impl CatalogLoadChannel {
+    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
     pub(crate) fn send(&self, result: CatalogLoadResult) {
         let _ = self.sender.send(result);
     }
@@ -810,6 +812,7 @@ fn filtered_particle_entries(state: &ParticlePickerState) -> Vec<String> {
         .collect()
 }
 
+#[cfg_attr(target_arch = "wasm32", allow(dead_code))]
 fn particles_local_dir() -> &'static str {
     option_env!("VIZMAT_PARTICLES_LOCAL_DIR").unwrap_or(concat!(
         env!("CARGO_MANIFEST_DIR"),
@@ -835,6 +838,7 @@ fn particle_local_asset_url(path: &str) -> String {
     format!("{}/{}", particles_asset_base_url(), path)
 }
 
+#[cfg_attr(target_arch = "wasm32", allow(dead_code))]
 fn particle_local_asset_path(path: &str) -> PathBuf {
     PathBuf::from(particles_local_dir()).join(path)
 }
@@ -1946,6 +1950,9 @@ fn load_particle_from_catalog_path(
     let name = path.rsplit('/').next().unwrap_or(path);
     file_drag_drop.status_message = format!("Loading: {name}");
     file_drag_drop.status_kind = FileStatusKind::Info;
+
+    #[cfg(target_arch = "wasm32")]
+    let _ = catalog_channel;
 
     #[cfg(not(target_arch = "wasm32"))]
     {
