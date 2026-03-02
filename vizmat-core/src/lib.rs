@@ -7,7 +7,7 @@ use crossbeam_channel::Sender;
 use crossbeam_channel::{Receiver, TryRecvError};
 use gloo::events::{EventListener, EventListenerOptions};
 use web_sys::wasm_bindgen::JsCast;
-use web_sys::{DragEvent, FileReader};
+use web_sys::{DragEvent, File, FileReader};
 
 pub(crate) mod io;
 pub(crate) mod ui;
@@ -202,15 +202,26 @@ pub fn register_drop(id: &str) -> Option<()> {
             info!("drop event");
 
             let transfer = event.data_transfer().expect("invalid data transfer");
-            let files = transfer.items();
+            let file_list = transfer.files().expect("invalid file list");
+            let item_list = transfer.items();
 
-            for idx in 0..files.length() {
-                let file = files.get(idx).expect("invalid item");
-                let file_info = file
-                    .get_as_file()
-                    .ok()
-                    .flatten()
-                    .expect("cannot flatten fileinfo");
+            let mut files: Vec<File> = Vec::new();
+            for idx in 0..file_list.length() {
+                if let Some(file) = file_list.get(idx) {
+                    files.push(file);
+                }
+            }
+            if files.is_empty() {
+                for idx in 0..item_list.length() {
+                    let item = item_list.get(idx).expect("invalid item");
+                    if let Ok(Some(file)) = item.get_as_file() {
+                        files.push(file);
+                    }
+                }
+            }
+
+            for (idx, file_info) in files.into_iter().enumerate() {
+                let idx = idx as u32;
 
                 info!(
                     "file[{idx}] = '{}' - {} - {} b",
@@ -243,8 +254,6 @@ pub fn register_drop(id: &str) -> Option<()> {
 
                 file_reader.read_as_array_buffer(&file_info).unwrap();
             }
-
-            info!("dragover event");
         },
     )
     .forget();
@@ -393,7 +402,12 @@ pub fn run_app() {
         .run();
 }
 
-fn web_event_observer(trigger: Trigger<WebEvent>, mut file_drag_drop: ResMut<FileDragDrop>) {
+fn web_event_observer(
+    trigger: Trigger<WebEvent>,
+    mut file_drag_drop: ResMut<FileDragDrop>,
+    mut next_ui_state: ResMut<NextState<AppUiState>>,
+    mut commands: Commands,
+) {
     match trigger.event() {
         WebEvent::Drop {
             name,
@@ -413,10 +427,16 @@ fn web_event_observer(trigger: Trigger<WebEvent>, mut file_drag_drop: ResMut<Fil
             }
             let contents = String::from_utf8_lossy(data);
             match parse_structure_by_extension(ext, &contents) {
-                Ok(crystal) => set_file_loaded_status(&mut file_drag_drop, name, crystal),
+                Ok(crystal) => {
+                    let crystal_resource = crystal.clone();
+                    set_file_loaded_status(&mut file_drag_drop, name, crystal);
+                    commands.insert_resource(crystal_resource);
+                    next_ui_state.set(AppUiState::Running);
+                }
                 Err(e) => {
                     eprintln!("Failed to parse structure file: {}", e);
                     set_file_error_status(&mut file_drag_drop, format!("Parse error: {e}"));
+                    warn!("Web drop parse error: {e}");
                 }
             }
 

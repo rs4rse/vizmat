@@ -2014,6 +2014,16 @@ fn load_particle_from_catalog_path(
                     anyhow::bail!("HTTP {} while loading {url}", resp.status());
                 }
                 let text = resp.text().await?;
+                let trimmed = text.trim_start();
+                let prefix: String = trimmed.chars().take(256).collect();
+                let prefix_lower = prefix.to_ascii_lowercase();
+                if prefix_lower.starts_with("<!doctype")
+                    || prefix_lower.starts_with("<html")
+                    || prefix_lower.starts_with("<head")
+                    || prefix_lower.starts_with("<body")
+                {
+                    anyhow::bail!("Unexpected HTML response while loading {url}");
+                }
                 Ok(text)
             }
 
