@@ -16,7 +16,18 @@ use crossbeam_channel::{Receiver, Sender};
 #[cfg(target_arch = "wasm32")]
 use gloo::net::http::Request;
 #[cfg(target_arch = "wasm32")]
+use wasm_bindgen::prelude::wasm_bindgen;
+#[cfg(target_arch = "wasm32")]
 use wasm_bindgen_futures::spawn_local;
+
+#[cfg(target_arch = "wasm32")]
+#[wasm_bindgen]
+extern "C" {
+    #[wasm_bindgen(js_name = vizmatSetTheme)]
+    fn vizmat_set_theme(theme: &str);
+    #[wasm_bindgen(js_name = vizmatGetTheme)]
+    fn vizmat_get_theme() -> String;
+}
 
 use crate::constants::{get_element_color, get_element_size, get_residue_class_color};
 #[allow(unused_imports)]
@@ -969,7 +980,20 @@ pub(crate) fn transition_to_running_on_structure_loaded(
 
 // System to set up file upload UI
 pub(crate) fn setup_file_ui(mut commands: Commands, mut font_assets: ResMut<Assets<Font>>) {
-    commands.insert_resource(UiTheme::default());
+    #[cfg(target_arch = "wasm32")]
+    let mut theme = UiTheme::default();
+    #[cfg(not(target_arch = "wasm32"))]
+    let theme = UiTheme::default();
+    #[cfg(target_arch = "wasm32")]
+    {
+        let js_theme = vizmat_get_theme();
+        if js_theme.eq_ignore_ascii_case("light") {
+            theme.mode = ThemeMode::Light;
+        } else if js_theme.eq_ignore_ascii_case("dark") {
+            theme.mode = ThemeMode::Dark;
+        }
+    }
+    commands.insert_resource(theme);
     commands.insert_resource(ColorModeAvailability::default());
     commands.insert_resource(AtomHoverCache::default());
     commands.insert_resource(SelectedAtom::default());
@@ -978,7 +1002,7 @@ pub(crate) fn setup_file_ui(mut commands: Commands, mut font_assets: ResMut<Asse
         query: String::new(),
         visible: false,
     });
-    let p = theme_palette(ThemeMode::Dark);
+    let p = theme_palette(theme.mode);
     let icon_font: Handle<Font> = font_assets.add(
         Font::try_from_bytes(
             include_bytes!(concat!(
@@ -1695,6 +1719,14 @@ pub(crate) fn toggle_theme_button(
                     ThemeMode::Dark => ThemeMode::Light,
                     ThemeMode::Light => ThemeMode::Dark,
                 };
+                #[cfg(target_arch = "wasm32")]
+                {
+                    let js_theme = match theme.mode {
+                        ThemeMode::Dark => "dark",
+                        ThemeMode::Light => "light",
+                    };
+                    vizmat_set_theme(js_theme);
+                }
                 *color = BackgroundColor(themed_button_bg(theme.mode, Interaction::Pressed));
                 for child in children.iter() {
                     if let Ok(mut text) = texts.get_mut(child) {

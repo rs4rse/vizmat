@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" data-theme="dark">
   <head>
     <meta charset="UTF-8">
     <title>vizmat: a cross platform crystal visualizer</title>
@@ -17,6 +17,22 @@
         --line: rgba(255, 255, 255, 0.16);
         --accent: #3dd2ff;
         --accent-soft: rgba(61, 210, 255, 0.18);
+        --bg-gradient: radial-gradient(120% 120% at 50% 10%, #0c1930 0%, var(--bg) 58%, #01040a 100%);
+        --loader-gradient: radial-gradient(130% 130% at 50% 10%, #10203a 0%, #030812 62%, #01040a 100%);
+        --canvas-bg: #030812;
+      }
+      html[data-theme="light"] {
+        --bg: #f7f8fb;
+        --bg-soft: rgba(255, 255, 255, 0.72);
+        --bg-soft-strong: rgba(255, 255, 255, 0.9);
+        --text: #141b2b;
+        --text-dim: #4b5b73;
+        --line: rgba(10, 20, 40, 0.12);
+        --accent: #1b74ff;
+        --accent-soft: rgba(27, 116, 255, 0.15);
+        --bg-gradient: radial-gradient(120% 120% at 50% 10%, #ffffff 0%, #f1f5ff 55%, #e7eefc 100%);
+        --loader-gradient: radial-gradient(140% 140% at 50% 5%, #ffffff 0%, #edf2ff 62%, #e4ebfb 100%);
+        --canvas-bg: #f5f7fb;
       }
       html, body {
         width: 100%;
@@ -26,7 +42,7 @@
         margin: 0;
         font-family: "Space Grotesk", "Avenir Next", "Segoe UI", sans-serif;
         overflow: hidden;
-        background: radial-gradient(120% 120% at 50% 10%, #0c1930 0%, var(--bg) 58%, #01040a 100%);
+        background: var(--bg-gradient);
       }
       .site-title {
         position: fixed;
@@ -110,7 +126,7 @@
         overflow: hidden;
         border: 1px solid var(--line);
         box-shadow: 0 24px 80px rgba(0, 0, 0, 0.45);
-        background: #030812;
+        background: var(--canvas-bg);
       }
       .loader {
         position: fixed;
@@ -119,7 +135,7 @@
         display: flex;
         align-items: center;
         justify-content: center;
-        background: radial-gradient(130% 130% at 50% 10%, #10203a 0%, #030812 62%, #01040a 100%);
+        background: var(--loader-gradient);
       }
       .loader-brand {
         position: fixed;
