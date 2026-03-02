@@ -292,7 +292,7 @@ pub fn run_app() {
                 setup_cameras,
                 setup_buttons,
                 setup_file_ui,
-                setup_startup_screen,
+                setup_startup_screen.after(setup_file_ui),
                 hide_non_startup_controls.after(setup_file_ui),
                 setup_websocket_stream,
             ),
