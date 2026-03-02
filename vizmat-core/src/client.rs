@@ -167,9 +167,11 @@ fn setup_wasm_websocket(tx: Sender<UpdateStructure>) {
         if let Ok(txt) = e.data().dyn_into::<js_sys::JsString>() {
             let text: String = txt.into();
             if let Ok(structure_msg) = serde_json::from_str::<StructureMessage>(&text) {
-                let atoms: Vec<Atom> = structure_msg.atoms.into_iter().map(|a| a.into()).collect();
+                let update_structure = structure_msg
+                    .try_into()
+                    .expect("ill defined structure message");
 
-                let _ = tx_clone.send(UpdateStructure { atoms });
+                let _ = tx_clone.send(update_structure);
             }
         }
     }) as Box<dyn FnMut(MessageEvent)>);
