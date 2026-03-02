@@ -236,7 +236,15 @@
       (function () {
         const loader = document.getElementById("app-loader");
         const status = document.getElementById("loader-status");
+        const canvas = document.getElementById("bevy-canvas");
         if (!loader) return;
+
+        if (canvas) {
+          // Keep RMB free for in-app panning instead of opening browser context menu.
+          canvas.addEventListener("contextmenu", (event) => event.preventDefault());
+          // Ensure keyboard/mouse interactions target the Bevy canvas after any click.
+          canvas.addEventListener("mousedown", () => canvas.focus());
+        }
 
         const hideLoader = () => {
           loader.classList.add("hidden");
