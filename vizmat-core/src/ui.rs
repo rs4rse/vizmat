@@ -9,6 +9,7 @@ use bevy::input::ButtonState;
 use bevy::prelude::*;
 use bevy::render::camera::Viewport;
 use bevy::render::view::RenderLayers;
+use bevy::ui::FocusPolicy;
 use bevy::ui::RelativeCursorPosition;
 
 use crate::constants::{get_element_color, get_element_size, get_residue_class_color};
@@ -30,6 +31,25 @@ const EMBEDDED_PARTICLE_LIST: &str = include_str!(concat!(
     env!("CARGO_MANIFEST_DIR"),
     "/../vizmat-app/assets/particles/list.txt"
 ));
+
+#[derive(States, Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub(crate) enum AppUiState {
+    #[default]
+    Startup,
+    Running,
+}
+
+#[derive(Component)]
+pub(crate) struct StartupScreenRoot;
+
+#[derive(Component)]
+pub(crate) struct HiddenOnStartup;
+
+#[derive(Component)]
+pub(crate) struct StartupTitleText;
+
+#[derive(Component)]
+pub(crate) struct StartupHelpText;
 
 #[derive(Component)]
 pub(crate) struct MainCamera;
@@ -781,6 +801,88 @@ fn embedded_particle_contents(path: &str) -> Option<&'static str> {
     }
 }
 
+pub(crate) fn setup_startup_screen(mut commands: Commands) {
+    commands
+        .spawn((
+            Node {
+                width: Val::Percent(100.0),
+                height: Val::Percent(100.0),
+                padding: UiRect::axes(Val::Px(24.0), Val::Px(24.0)),
+                align_items: AlignItems::Center,
+                justify_content: JustifyContent::Center,
+                ..default()
+            },
+            GlobalZIndex(-10),
+            FocusPolicy::Pass,
+            BackgroundColor(Color::NONE),
+            StartupScreenRoot,
+        ))
+        .with_children(|root| {
+            root.spawn((
+                Node {
+                    flex_direction: FlexDirection::Column,
+                    align_items: AlignItems::Center,
+                    row_gap: Val::Px(10.0),
+                    ..default()
+                },
+                BackgroundColor(Color::NONE),
+            ))
+            .with_children(|content| {
+                content.spawn((
+                    Text::new("VIZMAT"),
+                    TextFont {
+                        font_size: 50.0,
+                        ..default()
+                    },
+                    TextLayout::new_with_justify(JustifyText::Center),
+                    TextColor(Color::WHITE),
+                    StartupTitleText,
+                ));
+                content.spawn((
+                    Text::new("Click: Load Particle\nor drag and drop a file to start"),
+                    TextFont {
+                        font_size: 24.0,
+                        ..default()
+                    },
+                    TextLayout::new_with_justify(JustifyText::Center),
+                    TextColor(Color::WHITE),
+                    StartupHelpText,
+                ));
+            });
+        });
+}
+
+pub(crate) fn cleanup_startup_screen(
+    mut commands: Commands,
+    startup_query: Query<Entity, With<StartupScreenRoot>>,
+) {
+    for entity in &startup_query {
+        commands.entity(entity).despawn();
+    }
+}
+
+pub(crate) fn hide_non_startup_controls(mut controls: Query<&mut Node, With<HiddenOnStartup>>) {
+    for mut node in &mut controls {
+        node.display = Display::None;
+    }
+}
+
+pub(crate) fn show_non_startup_controls(mut controls: Query<&mut Node, With<HiddenOnStartup>>) {
+    for mut node in &mut controls {
+        node.display = Display::Flex;
+    }
+}
+
+pub(crate) fn transition_to_running_on_structure_loaded(
+    crystal: Option<Res<Crystal>>,
+    file_drag_drop: Res<crate::io::FileDragDrop>,
+    mut next_ui_state: ResMut<NextState<AppUiState>>,
+) {
+    if crystal.is_some() || file_drag_drop.loaded_crystal.is_some() {
+        next_ui_state.set(AppUiState::Running);
+    }
+}
+
 // System to set up file upload UI
 pub(crate) fn setup_file_ui(mut commands: Commands, mut font_assets: ResMut<Assets<Font>>) {
     commands.insert_resource(UiTheme::default());
@@ -863,9 +965,11 @@ pub(crate) fn setup_file_ui(mut commands: Commands, mut font_assets: ResMut<Asse
                         border: UiRect::all(Val::Px(1.0)),
                         ..default()
                     },
+                    Visibility::Visible,
                     BorderColor(p.border),
                     BackgroundColor(p.button_bg),
                     ColorModeButton,
+                    HiddenOnStartup,
                     HudButton,
                 ))
                 .with_children(|button| {
@@ -888,9 +992,11 @@ pub(crate) fn setup_file_ui(mut commands: Commands, mut font_assets: ResMut<Asse
                         border: UiRect::all(Val::Px(1.0)),
                         ..default()
                     },
+                    Visibility::Visible,
                     BorderColor(p.border),
                     BackgroundColor(p.button_bg),
                     ResetCameraButton,
+                    HiddenOnStartup,
                     HudButton,
                 ))
                 .with_children(|button| {
@@ -913,9 +1019,11 @@ pub(crate) fn setup_file_ui(mut commands: Commands, mut font_assets: ResMut<Asse
                         border: UiRect::all(Val::Px(1.0)),
                         ..default()
                     },
+                    Visibility::Visible,
                     BorderColor(p.border),
                     BackgroundColor(p.button_bg),
                     LightAttachmentButton { attached: false },
+                    HiddenOnStartup,
                     HudButton,
                 ))
                 .with_children(|button| {
@@ -938,9 +1046,11 @@ pub(crate) fn setup_file_ui(mut commands: Commands, mut font_assets: ResMut<Asse
                         border: UiRect::all(Val::Px(1.0)),
                         ..default()
                     },
+                    Visibility::Visible,
                     BorderColor(p.border),
                     BackgroundColor(p.button_bg),
                     BondToggleButton,
+                    HiddenOnStartup,
                     HudButton,
                 ))
                 .with_children(|button| {
@@ -966,10 +1076,12 @@ pub(crate) fn setup_file_ui(mut commands: Commands, mut font_assets: ResMut<Asse
                         align_items: AlignItems::Stretch,
                         ..default()
                     },
+                    Visibility::Visible,
                     BorderColor(p.border),
                     BackgroundColor(Color::srgba(0.5, 0.5, 0.5, 0.15)),
                     RelativeCursorPosition::default(),
                     BondToleranceSliderTrack,
+                    HiddenOnStartup,
                 ))
                 .with_children(|track| {
                     track.spawn((
@@ -989,9 +1101,11 @@ pub(crate) fn setup_file_ui(mut commands: Commands, mut font_assets: ResMut<Asse
                         font_size: 12.0,
                         ..default()
                     },
+                    Visibility::Visible,
                     TextColor(p.text),
                     HudButtonLabel,
                     BondToleranceText,
+                    HiddenOnStartup,
                 ));
             });
 
@@ -1010,8 +1124,10 @@ pub(crate) fn setup_file_ui(mut commands: Commands, mut font_assets: ResMut<Asse
                         font_size: 12.0,
                         ..default()
                     },
+                    Visibility::Visible,
                     TextColor(p.text),
                     FileUploadText,
+                    HiddenOnStartup,
                 ));
 
                 right
@@ -1212,6 +1328,7 @@ pub(crate) fn bond_tolerance_controls(
     mut text_queries: ParamSet<(
         Query<&mut Text, With<BondToleranceText>>,
         Query<&mut Text, With<BondToggleLabel>>,
+        Query<&mut Visibility, With<BondToleranceText>>,
     )>,
     mut node_queries: ParamSet<(
         Query<&mut Node, With<BondToleranceSliderTrack>>,
@@ -1259,11 +1376,12 @@ pub(crate) fn bond_tolerance_controls(
         }
     }
 
+    let show_tolerance_controls = settings.enabled && !using_file_bonds;
     if let Ok(mut slider_track) = node_queries.p0().single_mut() {
-        slider_track.display = if using_file_bonds {
-            Display::None
-        } else {
+        slider_track.display = if show_tolerance_controls {
             Display::Flex
+        } else {
+            Display::None
         };
     }
     if let Ok(mut text) = text_queries.p0().single_mut() {
@@ -1271,6 +1389,13 @@ pub(crate) fn bond_tolerance_controls(
             "File".into()
         } else {
             format!("{:.2}", settings.ui_tolerance_scale)
+        };
+    }
+    if let Ok(mut value_visibility) = text_queries.p2().single_mut() {
+        *value_visibility = if show_tolerance_controls {
+            Visibility::Visible
+        } else {
+            Visibility::Hidden
         };
     }
     if let Ok(mut text) = text_queries.p1().single_mut() {
@@ -1439,6 +1564,25 @@ pub(crate) fn apply_theme_to_hud(
         *color = TextColor(p.text_muted);
     }
     for mut color in &mut themed.text.p4() {
+        *color = TextColor(p.text_muted);
+    }
+}
+
+pub(crate) fn apply_theme_to_startup_screen(
+    theme: Res<UiTheme>,
+    mut startup_text_queries: ParamSet<(
+        Query<&mut TextColor, With<StartupTitleText>>,
+        Query<&mut TextColor, With<StartupHelpText>>,
+    )>,
+) {
+    if !theme.is_changed() {
+        return;
+    }
+    let p = theme_palette(theme.mode);
+    for mut color in &mut startup_text_queries.p0() {
+        *color = TextColor(p.text);
+    }
+    for mut color in &mut startup_text_queries.p1() {
         *color = TextColor(p.text_muted);
     }
 }
@@ -2752,6 +2896,8 @@ pub fn reset_camera_button_interaction(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::io::FileDragDrop;
+    use crate::structure::{Atom, Crystal};
 
     #[test]
     fn bond_tolerance_controls_system_runs_without_query_conflicts() {
@@ -2782,6 +2928,113 @@ mod tests {
             .spawn((BondToggleLabel, Text::new(""), TextColor(Color::WHITE)));
 
         app.add_systems(Update, bond_tolerance_controls);
+        app.update();
+    }
+
+    #[test]
+    fn startup_screen_spawns_hello_label() {
+        let mut app = App::new();
+        app.add_systems(Startup, setup_startup_screen);
+        app.update();
+
+        let hello_count = app
+            .world()
+            .iter_entities()
+            .filter_map(|entity| entity.get::<Text>())
+            .filter(|text| text.0.contains("Load Particle"))
+            .count();
+        assert_eq!(
+            hello_count, 1,
+            "startup screen should show startup instructions"
+        );
+    }
+
+    #[test]
+    fn startup_state_transitions_to_running_when_structure_is_loaded() {
+        let mut app = App::new();
+        app.add_plugins(bevy::state::app::StatesPlugin);
+        app.insert_resource(FileDragDrop::default());
+        app.init_state::<AppUiState>();
+        app.add_systems(Update, transition_to_running_on_structure_loaded);
+
+        app.world_mut()
+            .resource_mut::<FileDragDrop>()
+            .loaded_crystal = Some(Crystal {
+            atoms: vec![Atom {
+                element: "H".to_string(),
+                x: 0.0,
+                y: 0.0,
+                z: 0.0,
+                chain_id: None,
+                res_name: None,
+            }],
+            bonds: None,
+        });
+
+        app.update();
+        app.update();
+
+        let state = app.world().resource::<State<AppUiState>>();
+        assert_eq!(state.get(), &AppUiState::Running);
+    }
+
+    #[test]
+    fn startup_screen_is_cleaned_up_after_transition() {
+        let mut app = App::new();
+        app.add_plugins(bevy::state::app::StatesPlugin);
+        app.insert_resource(FileDragDrop::default());
+        app.init_state::<AppUiState>();
+        app.add_systems(OnEnter(AppUiState::Startup), setup_startup_screen);
+        app.add_systems(OnExit(AppUiState::Startup), cleanup_startup_screen);
+        app.add_systems(Update, transition_to_running_on_structure_loaded);
+
+        app.update();
+        let startup_count_before = app
+            .world()
+            .iter_entities()
+            .filter(|entity| entity.contains::<StartupScreenRoot>())
+            .count();
+        assert_eq!(startup_count_before, 1);
+
+        app.world_mut()
+            .resource_mut::<FileDragDrop>()
+            .loaded_crystal = Some(Crystal {
+            atoms: vec![Atom {
+                element: "H".to_string(),
+                x: 0.0,
+                y: 0.0,
+                z: 0.0,
+                chain_id: None,
+                res_name: None,
+            }],
+            bonds: None,
+        });
+
+        app.update();
+        app.update();
+
+        let startup_count_after = app
+            .world()
+            .iter_entities()
+            .filter(|entity| entity.contains::<StartupScreenRoot>())
+            .count();
+        assert_eq!(startup_count_after, 0);
+    }
+
+    #[test]
+    fn startup_theme_system_runs_without_query_conflicts() {
+        let mut app = App::new();
+        app.insert_resource(UiTheme {
+            mode: ThemeMode::Dark,
+        });
+        app.world_mut()
+            .spawn((StartupTitleText, TextColor(Color::WHITE)));
+        app.world_mut()
+            .spawn((StartupHelpText, TextColor(Color::WHITE)));
+
+        app.add_systems(Update, apply_theme_to_startup_screen);
+
+        app.world_mut().resource_mut::<UiTheme>().mode = ThemeMode::Light;
         app.update();
     }
 }

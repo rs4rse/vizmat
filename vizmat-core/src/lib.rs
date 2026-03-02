@@ -27,14 +27,16 @@ use crate::structure::{
 };
 use crate::ui::{
     apply_bond_tolerance_debounce, apply_theme_to_atom_hover_panel, apply_theme_to_hud,
-    auto_reset_view_on_crystal_change, bond_tolerance_controls, camera_controls, color_mode_button,
-    handle_load_default_button, handle_open_file_button, particle_picker_keyboard_search,
+    apply_theme_to_startup_screen, auto_reset_view_on_crystal_change, bond_tolerance_controls,
+    camera_controls, cleanup_startup_screen, color_mode_button, handle_load_default_button,
+    handle_open_file_button, hide_non_startup_controls, particle_picker_keyboard_search,
     particle_picker_result_buttons, particle_picker_toggle_button, refresh_particle_picker_panel,
     reset_camera_button_interaction, setup_cameras, setup_file_ui, setup_light,
-    sync_atom_selection_highlight, sync_color_mode_label, sync_gizmo_axis_rotation,
-    toggle_light_attachment, toggle_theme_button, update_atom_hover_cache, update_atom_hover_label,
+    setup_startup_screen, show_non_startup_controls, sync_atom_selection_highlight,
+    sync_color_mode_label, sync_gizmo_axis_rotation, toggle_light_attachment, toggle_theme_button,
+    transition_to_running_on_structure_loaded, update_atom_hover_cache, update_atom_hover_label,
     update_bond_order_legend, update_color_mode_availability, update_file_ui,
-    update_gizmo_viewport, update_scene, update_selected_atom_from_click,
+    update_gizmo_viewport, update_scene, update_selected_atom_from_click, AppUiState,
 };
 use crate::ui::{setup_buttons, spawn_axis};
 
@@ -266,6 +268,7 @@ pub fn run_app() {
         .init_resource::<FileDragDrop>()
         .init_resource::<AtomColorMode>()
         .init_resource::<BondInferenceSettings>()
+        .init_state::<AppUiState>()
         .add_event::<UpdateStructure>()
         .add_event::<bevy::window::FileDragAndDrop>()
         .add_systems(
@@ -274,9 +277,13 @@ pub fn run_app() {
                 setup_cameras,
                 setup_buttons,
                 setup_file_ui,
+                setup_startup_screen,
+                hide_non_startup_controls.after(setup_file_ui),
                 setup_websocket_stream,
             ),
         )
+        .add_systems(OnExit(AppUiState::Startup), cleanup_startup_screen)
+        .add_systems(OnEnter(AppUiState::Running), show_non_startup_controls)
         .add_systems(Startup, spawn_axis.after(setup_cameras))
         .add_systems(Startup, (setup_light).after(setup_cameras))
         .add_systems(
@@ -287,13 +294,25 @@ pub fn run_app() {
                 handle_file_drag_drop,
                 load_dropped_file,
                 update_crystal_from_file,
-                update_file_ui,
-                toggle_light_attachment,
             ),
         )
-        .add_systems(Update, reset_camera_button_interaction)
-        .add_systems(Update, handle_load_default_button)
-        .add_systems(Update, handle_open_file_button)
+        .add_systems(Update, update_file_ui)
+        .add_systems(
+            Update,
+            transition_to_running_on_structure_loaded.run_if(in_state(AppUiState::Startup)),
+        )
+        .add_systems(
+            Update,
+            reset_camera_button_interaction.run_if(in_state(AppUiState::Running)),
+        )
+        .add_systems(
+            Update,
+            handle_load_default_button.run_if(in_state(AppUiState::Running)),
+        )
+        .add_systems(
+            Update,
+            handle_open_file_button.run_if(in_state(AppUiState::Running)),
+        )
         .add_systems(Update, particle_picker_toggle_button)
         .add_systems(Update, particle_picker_keyboard_search)
         .add_systems(
@@ -301,25 +320,53 @@ pub fn run_app() {
             refresh_particle_picker_panel.after(particle_picker_keyboard_search),
         )
         .add_systems(Update, particle_picker_result_buttons)
-        .add_systems(Update, update_selected_atom_from_click)
-        .add_systems(Update, update_color_mode_availability)
         .add_systems(
             Update,
-            update_atom_hover_cache.after(update_color_mode_availability),
+            update_selected_atom_from_click.run_if(in_state(AppUiState::Running)),
         )
-        .add_systems(Update, color_mode_button)
-        .add_systems(Update, sync_color_mode_label.after(color_mode_button))
-        .add_systems(Update, bond_tolerance_controls)
         .add_systems(
             Update,
-            apply_bond_tolerance_debounce.after(bond_tolerance_controls),
+            update_color_mode_availability.run_if(in_state(AppUiState::Running)),
+        )
+        .add_systems(
+            Update,
+            update_atom_hover_cache
+                .after(update_color_mode_availability)
+                .run_if(in_state(AppUiState::Running)),
+        )
+        .add_systems(
+            Update,
+            color_mode_button.run_if(in_state(AppUiState::Running)),
+        )
+        .add_systems(
+            Update,
+            sync_color_mode_label
+                .after(color_mode_button)
+                .run_if(in_state(AppUiState::Running)),
+        )
+        .add_systems(
+            Update,
+            bond_tolerance_controls.run_if(in_state(AppUiState::Running)),
+        )
+        .add_systems(
+            Update,
+            apply_bond_tolerance_debounce
+                .after(bond_tolerance_controls)
+                .run_if(in_state(AppUiState::Running)),
         )
         .add_systems(Update, toggle_theme_button)
         .add_systems(Update, apply_theme_to_hud)
         .add_systems(Update, apply_theme_to_atom_hover_panel)
+        .add_systems(Update, apply_theme_to_startup_screen)
         .add_systems(
             Update,
-            auto_reset_view_on_crystal_change.after(update_crystal_from_file),
+            auto_reset_view_on_crystal_change
+                .after(update_crystal_from_file)
+                .run_if(in_state(AppUiState::Running)),
+        )
+        .add_systems(
+            Update,
+            toggle_light_attachment.run_if(in_state(AppUiState::Running)),
         )
         .add_systems(
             Update,
@@ -331,7 +378,8 @@ pub fn run_app() {
                 sync_atom_selection_highlight.after(update_scene),
                 update_bond_order_legend.after(update_scene),
                 update_atom_hover_label.after(update_scene),
-            ),
+            )
+                .run_if(in_state(AppUiState::Running)),
         )
         .add_observer(web_event_observer)
         .run();
