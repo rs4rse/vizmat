@@ -844,6 +844,16 @@ fn particle_remote_url(path: &str) -> String {
     format!("{}/{}", particles_remote_base_url(), path)
 }
 
+fn looks_like_html_response(contents: &str) -> bool {
+    let trimmed = contents.trim_start();
+    let prefix: String = trimmed.chars().take(256).collect();
+    let prefix_lower = prefix.to_ascii_lowercase();
+    prefix_lower.starts_with("<!doctype")
+        || prefix_lower.starts_with("<html")
+        || prefix_lower.starts_with("<head")
+        || prefix_lower.starts_with("<body")
+}
+
 #[cfg(target_arch = "wasm32")]
 fn particle_local_asset_url(path: &str) -> String {
     format!("{}/{}", particles_asset_base_url(), path)
@@ -1988,10 +1998,67 @@ fn load_particle_from_catalog_path(
 
     #[cfg(not(target_arch = "wasm32"))]
     {
+        let spawn_remote_fallback =
+            |path_owned: String, remote_url: String, sender: CatalogLoadChannel| {
+                std::thread::spawn(move || {
+                    let result = match reqwest::blocking::get(&remote_url) {
+                        Ok(response) => {
+                            if response.status().is_success() {
+                                response
+                                    .text()
+                                    .map_err(|e| format!("Read error: {e}"))
+                                    .and_then(|text| {
+                                        if looks_like_html_response(&text) {
+                                            Err(format!(
+                                            "Unexpected HTML response while loading {remote_url}"
+                                        ))
+                                        } else {
+                                            Ok(text)
+                                        }
+                                    })
+                            } else {
+                                Err(format!(
+                                    "HTTP {} while loading remote particle",
+                                    response.status()
+                                ))
+                            }
+                        }
+                        Err(remote_err) => Err(format!("Network error: {remote_err}")),
+                    };
+                    sender.send(CatalogLoadResult {
+                        path: path_owned,
+                        source: "remote fallback".to_string(),
+                        contents: result,
+                    });
+                });
+            };
+
         let local_path = particle_local_asset_path(path);
         match std::fs::read_to_string(&local_path) {
             Ok(contents) => {
-                if parse_and_store_catalog_particle(path, &contents, "local disk", file_drag_drop) {
+                if looks_like_html_response(&contents) {
+                    warn!(
+                        "Particle picker: local asset '{}' looks like HTML, trying remote fallback",
+                        local_path.display()
+                    );
+                    let Some(channel) = catalog_channel else {
+                        file_drag_drop.status_message =
+                            "Read error: local asset looks like HTML. Remote fallback unavailable."
+                                .to_string();
+                        file_drag_drop.status_kind = FileStatusKind::Error;
+                        return;
+                    };
+                    spawn_remote_fallback(
+                        path.to_string(),
+                        particle_remote_url(path),
+                        channel.clone(),
+                    );
+                } else if parse_and_store_catalog_particle(
+                    path,
+                    &contents,
+                    "local disk",
+                    file_drag_drop,
+                ) {
                     file_drag_drop.dragged_file = Some(local_path);
                 }
             }
@@ -2009,26 +2076,7 @@ fn load_particle_from_catalog_path(
                 let path_owned = path.to_string();
                 let remote_url = particle_remote_url(path);
                 let sender = channel.clone();
-                std::thread::spawn(move || {
-                    let result = match reqwest::blocking::get(&remote_url) {
-                        Ok(response) => {
-                            if response.status().is_success() {
-                                response.text().map_err(|e| format!("Read error: {e}"))
-                            } else {
-                                Err(format!(
-                                    "HTTP {} while loading remote particle",
-                                    response.status()
-                                ))
-                            }
-                        }
-                        Err(remote_err) => Err(format!("Network error: {remote_err}")),
-                    };
-                    sender.send(CatalogLoadResult {
-                        path: path_owned,
-                        source: "remote fallback".to_string(),
-                        contents: result,
-                    });
-                });
+                spawn_remote_fallback(path_owned, remote_url, sender);
             }
         }
     }
@@ -2046,14 +2094,7 @@ fn load_particle_from_catalog_path(
                     anyhow::bail!("HTTP {} while loading {url}", resp.status());
                 }
                 let text = resp.text().await?;
-                let trimmed = text.trim_start();
-                let prefix: String = trimmed.chars().take(256).collect();
-                let prefix_lower = prefix.to_ascii_lowercase();
-                if prefix_lower.starts_with("<!doctype")
-                    || prefix_lower.starts_with("<html")
-                    || prefix_lower.starts_with("<head")
-                    || prefix_lower.starts_with("<body")
-                {
+                if looks_like_html_response(&text) {
                     anyhow::bail!("Unexpected HTML response while loading {url}");
                 }
                 Ok(text)
