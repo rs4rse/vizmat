@@ -38,12 +38,12 @@ const GIZMO_VIEWPORT_SIZE_PX: u32 = 200;
 const GIZMO_VIEWPORT_MARGIN_PX: u32 = 10;
 const DEFAULT_PARTICLE_PATH: &str = "compounds/water.xyz";
 #[cfg(target_arch = "wasm32")]
-const DEFAULT_PARTICLES_ASSET_BASE_URL: &str = "assets/particles";
+const DEFAULT_PARTICLES_ASSET_BASE_URL: &str = "assets/structures";
 const DEFAULT_PARTICLES_REMOTE_BASE_URL: &str =
-    "https://raw.githubusercontent.com/syzer/vizmat-particles/main";
+    "https://raw.githubusercontent.com/syzer/vizmat-structures/main";
 const EMBEDDED_PARTICLE_LIST: &str = include_str!(concat!(
     env!("CARGO_MANIFEST_DIR"),
-    "/../vizmat-app/assets/particles/list.txt"
+    "/../vizmat-app/assets/structures/list.txt"
 ));
 
 #[derive(States, Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
@@ -903,12 +903,12 @@ fn parse_and_store_catalog_particle(
                 set_catalog_loaded_status(path, atom_count, file_bond_count);
             file_drag_drop.status_kind = FileStatusKind::Success;
             info!(
-                "Particle picker: loaded '{path}' from {source} with {atom_count} atoms and {file_bond_count} file bonds"
+                "Structure picker: loaded '{path}' from {source} with {atom_count} atoms and {file_bond_count} file bonds"
             );
             true
         }
         Err(err) => {
-            warn!("Particle picker: parse error for '{path}' from {source}: {err}");
+            warn!("Structure picker: parse error for '{path}' from {source}: {err}");
             file_drag_drop.status_message = format!("Parse error: {err}");
             file_drag_drop.status_kind = FileStatusKind::Error;
             false
@@ -1109,7 +1109,7 @@ pub(crate) fn setup_startup_screen(
                         ));
                     });
                 content.spawn((
-                    Text::new("or click Load Particle"),
+                    Text::new("or click Load Structure"),
                     TextFont {
                         font_size: 16.0,
                         ..default()
@@ -1231,7 +1231,7 @@ pub(crate) fn setup_file_ui(mut commands: Commands, mut font_assets: ResMut<Asse
                 ))
                 .with_children(|button| {
                     button.spawn((
-                        Text::new("Load Particle"),
+                        Text::new("Load Structure"),
                         TextFont {
                             font: default(),
                             font_size: 12.0,
@@ -1546,7 +1546,7 @@ pub(crate) fn setup_file_ui(mut commands: Commands, mut font_assets: ResMut<Asse
         ))
         .with_children(|panel| {
             panel.spawn((
-                Text::new("Search particles:"),
+                Text::new("Search structures:"),
                 TextFont {
                     font_size: 11.0,
                     ..default()
@@ -1667,7 +1667,7 @@ fn status_message_for_hud(status: &str, kind: FileStatusKind) -> String {
     match kind {
         FileStatusKind::Info => {
             if status.starts_with("Loading:") {
-                "Loading particle...".to_string()
+                "Loading structure...".to_string()
             } else {
                 status.to_string()
             }
@@ -1675,16 +1675,16 @@ fn status_message_for_hud(status: &str, kind: FileStatusKind) -> String {
         FileStatusKind::Success => status.to_string(),
         FileStatusKind::Error => {
             if status.starts_with("Load error") {
-                "Could not load particle from remote library. Check connection and try again."
+                "Could not load structure from remote library. Check connection and try again."
                     .to_string()
             } else if status.starts_with("Read error:") {
-                "Could not read particle source. Check path or network and try again.".to_string()
+                "Could not read structure source. Check path or network and try again.".to_string()
             } else if status.starts_with("Parse error:") {
                 "Could not parse that structure file. Try a different file.".to_string()
             } else if status.starts_with("Unsupported file.") {
                 format!("Unsupported file. Use {}.", SUPPORTED_EXTENSIONS_HELP)
             } else {
-                "Load failed. Try again with another particle.".to_string()
+                "Load failed. Try again with another structure.".to_string()
             }
         }
     }
@@ -2196,7 +2196,7 @@ fn load_particle_from_catalog_path(
                                     })
                             } else {
                                 Err(format!(
-                                    "HTTP {} while loading remote particle",
+                                    "HTTP {} while loading remote structure",
                                     response.status()
                                 ))
                             }
@@ -2216,7 +2216,7 @@ fn load_particle_from_catalog_path(
             Ok(contents) => {
                 if looks_like_html_response(&contents) {
                     warn!(
-                        "Particle picker: local asset '{}' looks like HTML, trying remote fallback",
+                        "Structure picker: local asset '{}' looks like HTML, trying remote fallback",
                         local_path.display()
                     );
                     let Some(channel) = catalog_channel else {
@@ -2242,7 +2242,7 @@ fn load_particle_from_catalog_path(
             }
             Err(err) => {
                 warn!(
-                    "Particle picker: read error for '{path}' at '{}': {err}",
+                    "Structure picker: read error for '{path}' at '{}': {err}",
                     local_path.display()
                 );
                 let Some(channel) = catalog_channel else {
@@ -2281,7 +2281,7 @@ fn load_particle_from_catalog_path(
             let result = match fetch_text(local_url).await {
                 Ok(text) => Ok(text),
                 Err(err) => {
-                    warn!("Particle picker: local URL failed, trying remote fallback: {err}");
+                    warn!("Structure picker: local URL failed, trying remote fallback: {err}");
                     fetch_text(remote_url).await
                 }
             };
@@ -2293,7 +2293,7 @@ fn load_particle_from_catalog_path(
                     mime_type: "text/plain".to_string(),
                 }),
                 Err(err) => {
-                    warn!("Particle picker: web fetch failed for '{path_owned}': {err}");
+                    warn!("Structure picker: web fetch failed for '{path_owned}': {err}");
                     crate::send_event(crate::WebEvent::CatalogLoadError {
                         path: path_owned,
                         message: format!("{err}"),
@@ -3535,7 +3535,7 @@ mod tests {
             .world()
             .iter_entities()
             .filter_map(|entity| entity.get::<Text>())
-            .filter(|text| text.0.contains("Load Particle"))
+            .filter(|text| text.0.contains("Load Structure"))
             .count();
         assert_eq!(
             hello_count, 1,
@@ -3637,7 +3637,7 @@ mod tests {
     #[test]
     fn hud_status_message_is_user_friendly_for_errors() {
         let msg = status_message_for_hud("Read error: missing file", FileStatusKind::Error);
-        assert!(msg.contains("Could not read particle source"));
+        assert!(msg.contains("Could not read structure source"));
         let msg = status_message_for_hud("Parse error: bad token", FileStatusKind::Error);
         assert!(msg.contains("Could not parse"));
     }
