@@ -36,12 +36,12 @@ const LAYER_GIZMO: RenderLayers = RenderLayers::layer(1);
 const LAYER_CANVAS: RenderLayers = RenderLayers::layer(0);
 const GIZMO_VIEWPORT_SIZE_PX: u32 = 200;
 const GIZMO_VIEWPORT_MARGIN_PX: u32 = 10;
-const DEFAULT_PARTICLE_PATH: &str = "compounds/water.xyz";
+const DEFAULT_STRUCTURE_PATH: &str = "compounds/water.xyz";
 #[cfg(target_arch = "wasm32")]
-const DEFAULT_PARTICLES_ASSET_BASE_URL: &str = "assets/structures";
-const DEFAULT_PARTICLES_REMOTE_BASE_URL: &str =
+const DEFAULT_STRUCTURES_ASSET_BASE_URL: &str = "assets/structures";
+const DEFAULT_STRUCTURES_REMOTE_BASE_URL: &str =
     "https://raw.githubusercontent.com/syzer/vizmat-structures/main";
-const EMBEDDED_PARTICLE_LIST: &str = include_str!(concat!(
+const EMBEDDED_STRUCTURE_LIST: &str = include_str!(concat!(
     env!("CARGO_MANIFEST_DIR"),
     "/../vizmat-app/assets/structures/list.txt"
 ));
@@ -110,24 +110,24 @@ pub(crate) struct ThemeToggleButton;
 pub(crate) struct ThemeToggleIcon;
 
 #[derive(Component)]
-pub(crate) struct ParticlePickerToggleButton;
+pub(crate) struct StructurePickerToggleButton;
 
 #[derive(Component)]
-pub(crate) struct ParticlePickerPanel;
+pub(crate) struct StructurePickerPanel;
 
 #[derive(Component)]
-pub(crate) struct ParticlePickerQueryText;
+pub(crate) struct StructurePickerQueryText;
 
 #[derive(Component)]
-pub(crate) struct ParticlePickerResultsRoot;
+pub(crate) struct StructurePickerResultsRoot;
 
 #[derive(Component, Clone)]
-pub(crate) struct ParticlePickerResultButton {
+pub(crate) struct StructurePickerResultButton {
     pub(crate) path: String,
 }
 
 #[derive(Resource, Default)]
-pub(crate) struct ParticlePickerState {
+pub(crate) struct StructurePickerState {
     pub(crate) entries: Vec<String>,
     pub(crate) query: String,
     pub(crate) visible: bool,
@@ -152,16 +152,16 @@ pub(crate) struct HudHelpText;
 pub(crate) struct HudLegendText;
 
 #[derive(Component)]
-pub(crate) struct ParticleLoadingOverlay;
+pub(crate) struct StructureLoadingOverlay;
 
 #[derive(Component)]
-pub(crate) struct ParticleLoadingTitle;
+pub(crate) struct StructureLoadingTitle;
 
 #[derive(Component)]
-pub(crate) struct ParticleLoadingTelemetry;
+pub(crate) struct StructureLoadingTelemetry;
 
 #[derive(Component)]
-pub(crate) struct ParticleLoadingProgressFill;
+pub(crate) struct StructureLoadingProgressFill;
 
 #[derive(Debug)]
 pub(crate) struct CatalogLoadResult {
@@ -796,18 +796,18 @@ type StartupThemeTextQueries<'w, 's> = (
     Query<'w, 's, &'static mut BackgroundColor, With<StartupDropzoneSegment>>,
 );
 
-type ParticleLoadingTextQueries<'w, 's> = (
-    Query<'w, 's, &'static mut Text, With<ParticleLoadingTitle>>,
-    Query<'w, 's, &'static mut Text, With<ParticleLoadingTelemetry>>,
+type StructureLoadingTextQueries<'w, 's> = (
+    Query<'w, 's, &'static mut Text, With<StructureLoadingTitle>>,
+    Query<'w, 's, &'static mut Text, With<StructureLoadingTelemetry>>,
 );
 
-type ParticleLoadingNodeQueries<'w, 's> = (
-    Query<'w, 's, &'static mut Node, With<ParticleLoadingOverlay>>,
-    Query<'w, 's, &'static mut Node, With<ParticleLoadingProgressFill>>,
+type StructureLoadingNodeQueries<'w, 's> = (
+    Query<'w, 's, &'static mut Node, With<StructureLoadingOverlay>>,
+    Query<'w, 's, &'static mut Node, With<StructureLoadingProgressFill>>,
 );
 
-fn parse_embedded_particle_entries() -> Vec<String> {
-    EMBEDDED_PARTICLE_LIST
+fn parse_embedded_structure_entries() -> Vec<String> {
+    EMBEDDED_STRUCTURE_LIST
         .lines()
         .map(str::trim)
         .filter(|line| !line.is_empty() && !line.starts_with('#'))
@@ -815,7 +815,7 @@ fn parse_embedded_particle_entries() -> Vec<String> {
         .collect()
 }
 
-fn particle_matches_query(path: &str, query: &str) -> bool {
+fn structure_matches_query(path: &str, query: &str) -> bool {
     if query.trim().is_empty() {
         return true;
     }
@@ -823,35 +823,35 @@ fn particle_matches_query(path: &str, query: &str) -> bool {
         .contains(&query.trim().to_ascii_lowercase())
 }
 
-fn filtered_particle_entries(state: &ParticlePickerState) -> Vec<String> {
+fn filtered_structure_entries(state: &StructurePickerState) -> Vec<String> {
     state
         .entries
         .iter()
-        .filter(|entry| particle_matches_query(entry, &state.query))
+        .filter(|entry| structure_matches_query(entry, &state.query))
         .take(12)
         .cloned()
         .collect()
 }
 
 #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
-fn particles_local_dir() -> &'static str {
-    option_env!("VIZMAT_PARTICLES_LOCAL_DIR").unwrap_or(concat!(
+fn structures_local_dir() -> &'static str {
+    option_env!("VIZMAT_STRUCTURES_LOCAL_DIR").unwrap_or(concat!(
         env!("CARGO_MANIFEST_DIR"),
-        "/../vizmat-app/assets/particles"
+        "/../vizmat-app/assets/structures"
     ))
 }
 
 #[cfg(target_arch = "wasm32")]
-fn particles_asset_base_url() -> &'static str {
-    option_env!("VIZMAT_PARTICLES_ASSET_BASE_URL").unwrap_or(DEFAULT_PARTICLES_ASSET_BASE_URL)
+fn structures_asset_base_url() -> &'static str {
+    option_env!("VIZMAT_STRUCTURES_ASSET_BASE_URL").unwrap_or(DEFAULT_STRUCTURES_ASSET_BASE_URL)
 }
 
-fn particles_remote_base_url() -> &'static str {
-    option_env!("VIZMAT_PARTICLES_REMOTE_BASE_URL").unwrap_or(DEFAULT_PARTICLES_REMOTE_BASE_URL)
+fn structures_remote_base_url() -> &'static str {
+    option_env!("VIZMAT_STRUCTURES_REMOTE_BASE_URL").unwrap_or(DEFAULT_STRUCTURES_REMOTE_BASE_URL)
 }
 
-fn particle_remote_url(path: &str) -> String {
-    format!("{}/{}", particles_remote_base_url(), path)
+fn structure_remote_url(path: &str) -> String {
+    format!("{}/{}", structures_remote_base_url(), path)
 }
 
 fn looks_like_html_response(contents: &str) -> bool {
@@ -865,13 +865,13 @@ fn looks_like_html_response(contents: &str) -> bool {
 }
 
 #[cfg(target_arch = "wasm32")]
-fn particle_local_asset_url(path: &str) -> String {
-    format!("{}/{}", particles_asset_base_url(), path)
+fn structure_local_asset_url(path: &str) -> String {
+    format!("{}/{}", structures_asset_base_url(), path)
 }
 
 #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
-fn particle_local_asset_path(path: &str) -> PathBuf {
-    PathBuf::from(particles_local_dir()).join(path)
+fn structure_local_asset_path(path: &str) -> PathBuf {
+    PathBuf::from(structures_local_dir()).join(path)
 }
 
 fn set_catalog_loaded_status(path: &str, atom_count: usize, file_bond_count: usize) -> String {
@@ -883,7 +883,7 @@ fn set_catalog_loaded_status(path: &str, atom_count: usize, file_bond_count: usi
     }
 }
 
-fn parse_and_store_catalog_particle(
+fn parse_and_store_catalog_structure(
     path: &str,
     contents: &str,
     source: &str,
@@ -1172,8 +1172,8 @@ pub(crate) fn setup_file_ui(mut commands: Commands, mut font_assets: ResMut<Asse
     commands.insert_resource(ColorModeAvailability::default());
     commands.insert_resource(AtomHoverCache::default());
     commands.insert_resource(SelectedAtom::default());
-    commands.insert_resource(ParticlePickerState {
-        entries: parse_embedded_particle_entries(),
+    commands.insert_resource(StructurePickerState {
+        entries: parse_embedded_structure_entries(),
         query: String::new(),
         visible: false,
     });
@@ -1226,7 +1226,7 @@ pub(crate) fn setup_file_ui(mut commands: Commands, mut font_assets: ResMut<Asse
                     },
                     BorderColor(p.border),
                     BackgroundColor(p.button_bg),
-                    ParticlePickerToggleButton,
+                    StructurePickerToggleButton,
                     HudButton,
                 ))
                 .with_children(|button| {
@@ -1463,7 +1463,7 @@ pub(crate) fn setup_file_ui(mut commands: Commands, mut font_assets: ResMut<Asse
             GlobalZIndex(20),
             FocusPolicy::Pass,
             BackgroundColor(Color::NONE),
-            ParticleLoadingOverlay,
+            StructureLoadingOverlay,
         ))
         .with_children(|overlay| {
             overlay
@@ -1487,7 +1487,7 @@ pub(crate) fn setup_file_ui(mut commands: Commands, mut font_assets: ResMut<Asse
                             ..default()
                         },
                         TextColor(p.text),
-                        ParticleLoadingTitle,
+                        StructureLoadingTitle,
                     ));
                     panel
                         .spawn((
@@ -1510,7 +1510,7 @@ pub(crate) fn setup_file_ui(mut commands: Commands, mut font_assets: ResMut<Asse
                                     ..default()
                                 },
                                 BackgroundColor(p.slider_fill),
-                                ParticleLoadingProgressFill,
+                                StructureLoadingProgressFill,
                             ));
                         });
                     panel.spawn((
@@ -1520,7 +1520,7 @@ pub(crate) fn setup_file_ui(mut commands: Commands, mut font_assets: ResMut<Asse
                             ..default()
                         },
                         TextColor(p.text_muted),
-                        ParticleLoadingTelemetry,
+                        StructureLoadingTelemetry,
                     ));
                 });
         });
@@ -1542,7 +1542,7 @@ pub(crate) fn setup_file_ui(mut commands: Commands, mut font_assets: ResMut<Asse
             },
             BorderColor(p.border),
             BackgroundColor(p.bar_bg_alt),
-            ParticlePickerPanel,
+            StructurePickerPanel,
         ))
         .with_children(|panel| {
             panel.spawn((
@@ -1561,7 +1561,7 @@ pub(crate) fn setup_file_ui(mut commands: Commands, mut font_assets: ResMut<Asse
                     ..default()
                 },
                 TextColor(p.text),
-                ParticlePickerQueryText,
+                StructurePickerQueryText,
             ));
             panel.spawn((
                 Node {
@@ -1571,7 +1571,7 @@ pub(crate) fn setup_file_ui(mut commands: Commands, mut font_assets: ResMut<Asse
                     ..default()
                 },
                 BackgroundColor(Color::NONE),
-                ParticlePickerResultsRoot,
+                StructurePickerResultsRoot,
             ));
         });
 
@@ -1706,12 +1706,12 @@ pub(crate) fn update_file_ui(
 }
 
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn update_particle_loading_overlay(
+pub(crate) fn update_structure_loading_overlay(
     file_drag_drop: Res<crate::io::FileDragDrop>,
     time: Res<Time>,
     _theme: Res<UiTheme>,
-    mut node_queries: ParamSet<ParticleLoadingNodeQueries<'_, '_>>,
-    mut text_queries: ParamSet<ParticleLoadingTextQueries<'_, '_>>,
+    mut node_queries: ParamSet<StructureLoadingNodeQueries<'_, '_>>,
+    mut text_queries: ParamSet<StructureLoadingTextQueries<'_, '_>>,
 ) {
     let status = file_drag_drop.status_message.as_str();
     let is_visible = status.starts_with("Loading:");
@@ -1752,7 +1752,7 @@ pub(crate) fn handle_catalog_load_results(
     while let Some(result) = channel.try_recv() {
         match result.contents {
             Ok(contents) => {
-                if parse_and_store_catalog_particle(
+                if parse_and_store_catalog_structure(
                     &result.path,
                     &contents,
                     &result.source,
@@ -2162,7 +2162,7 @@ pub fn clear_old_atoms(mut commands: Commands, atom_query: Query<Entity, With<At
     }
 }
 
-fn load_particle_from_catalog_path(
+fn load_structure_from_catalog_path(
     path: &str,
     file_drag_drop: &mut crate::io::FileDragDrop,
     catalog_channel: Option<&CatalogLoadChannel>,
@@ -2211,7 +2211,7 @@ fn load_particle_from_catalog_path(
                 });
             };
 
-        let local_path = particle_local_asset_path(path);
+        let local_path = structure_local_asset_path(path);
         match std::fs::read_to_string(&local_path) {
             Ok(contents) => {
                 if looks_like_html_response(&contents) {
@@ -2228,10 +2228,10 @@ fn load_particle_from_catalog_path(
                     };
                     spawn_remote_fallback(
                         path.to_string(),
-                        particle_remote_url(path),
+                        structure_remote_url(path),
                         channel.clone(),
                     );
-                } else if parse_and_store_catalog_particle(
+                } else if parse_and_store_catalog_structure(
                     path,
                     &contents,
                     "local disk",
@@ -2252,7 +2252,7 @@ fn load_particle_from_catalog_path(
                     return;
                 };
                 let path_owned = path.to_string();
-                let remote_url = particle_remote_url(path);
+                let remote_url = structure_remote_url(path);
                 let sender = channel.clone();
                 spawn_remote_fallback(path_owned, remote_url, sender);
             }
@@ -2263,8 +2263,8 @@ fn load_particle_from_catalog_path(
     {
         let path_owned = path.to_string();
         spawn_local(async move {
-            let local_url = particle_local_asset_url(&path_owned);
-            let remote_url = particle_remote_url(&path_owned);
+            let local_url = structure_local_asset_url(&path_owned);
+            let remote_url = structure_remote_url(&path_owned);
 
             async fn fetch_text(url: String) -> anyhow::Result<String> {
                 let resp = Request::get(&url).send().await?;
@@ -2305,12 +2305,12 @@ fn load_particle_from_catalog_path(
 }
 
 #[allow(clippy::type_complexity)]
-pub(crate) fn particle_picker_toggle_button(
+pub(crate) fn structure_picker_toggle_button(
     mut interaction_query: Query<
         (&Interaction, &mut BackgroundColor),
-        (Changed<Interaction>, With<ParticlePickerToggleButton>),
+        (Changed<Interaction>, With<StructurePickerToggleButton>),
     >,
-    mut picker: ResMut<ParticlePickerState>,
+    mut picker: ResMut<StructurePickerState>,
     theme: Res<UiTheme>,
 ) {
     for (interaction, mut color) in &mut interaction_query {
@@ -2332,9 +2332,9 @@ pub(crate) fn particle_picker_toggle_button(
     }
 }
 
-pub(crate) fn particle_picker_keyboard_search(
+pub(crate) fn structure_picker_keyboard_search(
     mut keyboard_events: EventReader<KeyboardInput>,
-    mut picker: ResMut<ParticlePickerState>,
+    mut picker: ResMut<StructurePickerState>,
     mut file_drag_drop: ResMut<crate::io::FileDragDrop>,
     catalog_channel: Option<Res<CatalogLoadChannel>>,
 ) {
@@ -2355,8 +2355,8 @@ pub(crate) fn particle_picker_keyboard_search(
                 picker.query.pop();
             }
             Key::Enter => {
-                if let Some(first) = filtered_particle_entries(&picker).first().cloned() {
-                    load_particle_from_catalog_path(
+                if let Some(first) = filtered_structure_entries(&picker).first().cloned() {
+                    load_structure_from_catalog_path(
                         &first,
                         &mut file_drag_drop,
                         catalog_channel.as_deref(),
@@ -2377,12 +2377,12 @@ pub(crate) fn particle_picker_keyboard_search(
     }
 }
 
-pub(crate) fn refresh_particle_picker_panel(
+pub(crate) fn refresh_structure_picker_panel(
     mut commands: Commands,
-    picker: Res<ParticlePickerState>,
-    mut panel_query: Query<&mut Node, With<ParticlePickerPanel>>,
-    mut query_text: Query<&mut Text, With<ParticlePickerQueryText>>,
-    mut results_root_query: Query<(Entity, Option<&Children>), With<ParticlePickerResultsRoot>>,
+    picker: Res<StructurePickerState>,
+    mut panel_query: Query<&mut Node, With<StructurePickerPanel>>,
+    mut query_text: Query<&mut Text, With<StructurePickerQueryText>>,
+    mut results_root_query: Query<(Entity, Option<&Children>), With<StructurePickerResultsRoot>>,
     theme: Res<UiTheme>,
 ) {
     let Ok(mut panel_node) = panel_query.single_mut() else {
@@ -2420,8 +2420,8 @@ pub(crate) fn refresh_particle_picker_panel(
     }
 
     let palette = theme_palette(theme.mode);
-    for path in filtered_particle_entries(&picker) {
-        let label = if path == DEFAULT_PARTICLE_PATH {
+    for path in filtered_structure_entries(&picker) {
+        let label = if path == DEFAULT_STRUCTURE_PATH {
             format!("DEFAULT · {path}")
         } else {
             path.clone()
@@ -2438,7 +2438,7 @@ pub(crate) fn refresh_particle_picker_panel(
                     },
                     BorderColor(palette.border),
                     BackgroundColor(palette.button_bg),
-                    ParticlePickerResultButton { path: path.clone() },
+                    StructurePickerResultButton { path: path.clone() },
                     HudButton,
                 ))
                 .with_children(|button| {
@@ -2457,16 +2457,16 @@ pub(crate) fn refresh_particle_picker_panel(
 }
 
 #[allow(clippy::type_complexity)]
-pub(crate) fn particle_picker_result_buttons(
+pub(crate) fn structure_picker_result_buttons(
     mut interaction_query: Query<
         (
             &Interaction,
-            &ParticlePickerResultButton,
+            &StructurePickerResultButton,
             &mut BackgroundColor,
         ),
-        (Changed<Interaction>, With<ParticlePickerResultButton>),
+        (Changed<Interaction>, With<StructurePickerResultButton>),
     >,
-    mut picker: ResMut<ParticlePickerState>,
+    mut picker: ResMut<StructurePickerState>,
     mut file_drag_drop: ResMut<crate::io::FileDragDrop>,
     catalog_channel: Option<Res<CatalogLoadChannel>>,
     theme: Res<UiTheme>,
@@ -2475,7 +2475,7 @@ pub(crate) fn particle_picker_result_buttons(
         match *interaction {
             Interaction::Pressed => {
                 *background = BackgroundColor(themed_button_bg(theme.mode, Interaction::Pressed));
-                load_particle_from_catalog_path(
+                load_structure_from_catalog_path(
                     &selected.path,
                     &mut file_drag_drop,
                     catalog_channel.as_deref(),
@@ -3643,7 +3643,7 @@ mod tests {
     }
 
     #[test]
-    fn particle_loading_overlay_system_runs_without_query_conflicts() {
+    fn structure_loading_overlay_system_runs_without_query_conflicts() {
         let mut app = App::new();
         app.init_resource::<Time>();
         app.insert_resource(UiTheme {
@@ -3652,13 +3652,14 @@ mod tests {
         app.insert_resource(crate::io::FileDragDrop::default());
 
         app.world_mut()
-            .spawn((ParticleLoadingOverlay, Node::default()));
-        app.world_mut().spawn((ParticleLoadingTitle, Text::new("")));
+            .spawn((StructureLoadingOverlay, Node::default()));
         app.world_mut()
-            .spawn((ParticleLoadingTelemetry, Text::new("")));
+            .spawn((StructureLoadingTitle, Text::new("")));
         app.world_mut()
-            .spawn((ParticleLoadingProgressFill, Node::default()));
-        app.add_systems(Update, update_particle_loading_overlay);
+            .spawn((StructureLoadingTelemetry, Text::new("")));
+        app.world_mut()
+            .spawn((StructureLoadingProgressFill, Node::default()));
+        app.add_systems(Update, update_structure_loading_overlay);
         app.update();
     }
 }

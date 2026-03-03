@@ -34,14 +34,14 @@ use crate::ui::{
     apply_theme_to_startup_screen, auto_reset_view_on_crystal_change, bond_tolerance_controls,
     camera_controls, cleanup_startup_screen, color_mode_button, handle_catalog_load_results,
     handle_load_default_button, handle_open_file_button, hide_non_startup_controls,
-    particle_picker_keyboard_search, particle_picker_result_buttons, particle_picker_toggle_button,
-    refresh_particle_picker_panel, reset_camera_button_interaction, setup_cameras, setup_file_ui,
-    setup_light, setup_startup_screen, show_non_startup_controls, sync_atom_selection_highlight,
+    refresh_structure_picker_panel, reset_camera_button_interaction, setup_cameras, setup_file_ui,
+    setup_light, setup_startup_screen, show_non_startup_controls, structure_picker_keyboard_search,
+    structure_picker_result_buttons, structure_picker_toggle_button, sync_atom_selection_highlight,
     sync_color_mode_label, sync_gizmo_axis_rotation, toggle_light_attachment, toggle_theme_button,
     transition_to_running_on_structure_loaded, update_atom_hover_cache, update_atom_hover_label,
     update_bond_order_legend, update_color_mode_availability, update_file_ui,
-    update_gizmo_viewport, update_particle_loading_overlay, update_scene,
-    update_selected_atom_from_click, AppUiState, CatalogLoadChannel,
+    update_gizmo_viewport, update_scene, update_selected_atom_from_click,
+    update_structure_loading_overlay, AppUiState, CatalogLoadChannel,
 };
 use crate::ui::{setup_buttons, spawn_axis};
 
@@ -339,7 +339,7 @@ pub fn run_app() {
             ),
         )
         .add_systems(Update, update_file_ui)
-        .add_systems(Update, update_particle_loading_overlay)
+        .add_systems(Update, update_structure_loading_overlay)
         .add_systems(Update, handle_catalog_load_results)
         .add_systems(
             Update,
@@ -357,13 +357,13 @@ pub fn run_app() {
             Update,
             handle_open_file_button.run_if(in_state(AppUiState::Running)),
         )
-        .add_systems(Update, particle_picker_toggle_button)
-        .add_systems(Update, particle_picker_keyboard_search)
+        .add_systems(Update, structure_picker_toggle_button)
+        .add_systems(Update, structure_picker_keyboard_search)
         .add_systems(
             Update,
-            refresh_particle_picker_panel.after(particle_picker_keyboard_search),
+            refresh_structure_picker_panel.after(structure_picker_keyboard_search),
         )
-        .add_systems(Update, particle_picker_result_buttons)
+        .add_systems(Update, structure_picker_result_buttons)
         .add_systems(
             Update,
             update_selected_atom_from_click.run_if(in_state(AppUiState::Running)),
@@ -474,7 +474,7 @@ fn web_event_observer(
             let name = path.rsplit('/').next().unwrap_or(path);
             file_drag_drop.status_message = format!("Load error ({name}): {message}");
             file_drag_drop.status_kind = crate::io::FileStatusKind::Error;
-            eprintln!("Failed to load catalog particle '{path}': {message}");
+            eprintln!("Failed to load catalog structure '{path}': {message}");
         }
     }
 }
