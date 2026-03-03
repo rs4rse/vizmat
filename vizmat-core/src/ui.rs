@@ -14,20 +14,11 @@ use bevy::ui::FocusPolicy;
 use bevy::ui::RelativeCursorPosition;
 use crossbeam_channel::{Receiver, Sender};
 #[cfg(target_arch = "wasm32")]
-use gloo::net::http::Request;
-#[cfg(target_arch = "wasm32")]
-use wasm_bindgen::prelude::wasm_bindgen;
-#[cfg(target_arch = "wasm32")]
-use wasm_bindgen_futures::spawn_local;
-
-#[cfg(target_arch = "wasm32")]
-#[wasm_bindgen]
-extern "C" {
-    #[wasm_bindgen(js_name = vizmatSetTheme)]
-    fn vizmat_set_theme(theme: &str);
-    #[wasm_bindgen(js_name = vizmatGetTheme)]
-    fn vizmat_get_theme() -> String;
-}
+use {
+    crate::{get_web_theme, set_web_theme},
+    gloo::net::http::Request,
+    wasm_bindgen_futures::spawn_local,
+};
 
 use crate::constants::{get_element_color, get_element_size, get_residue_class_color};
 #[allow(unused_imports)]
@@ -1170,10 +1161,10 @@ pub(crate) fn setup_file_ui(mut commands: Commands, mut font_assets: ResMut<Asse
     let theme = UiTheme::default();
     #[cfg(target_arch = "wasm32")]
     {
-        let js_theme = vizmat_get_theme();
-        if js_theme.eq_ignore_ascii_case("light") {
+        let web_theme = get_web_theme().unwrap_or_default();
+        if web_theme.eq_ignore_ascii_case("light") {
             theme.mode = ThemeMode::Light;
-        } else if js_theme.eq_ignore_ascii_case("dark") {
+        } else if web_theme.eq_ignore_ascii_case("dark") {
             theme.mode = ThemeMode::Dark;
         }
     }
@@ -1906,11 +1897,11 @@ pub(crate) fn toggle_theme_button(
                 };
                 #[cfg(target_arch = "wasm32")]
                 {
-                    let js_theme = match theme.mode {
+                    let web_theme = match theme.mode {
                         ThemeMode::Dark => "dark",
                         ThemeMode::Light => "light",
                     };
-                    vizmat_set_theme(js_theme);
+                    set_web_theme(web_theme);
                 }
                 *color = BackgroundColor(themed_button_bg(theme.mode, Interaction::Pressed));
                 for child in children.iter() {

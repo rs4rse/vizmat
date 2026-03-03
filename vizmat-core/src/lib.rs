@@ -3,11 +3,15 @@ use std::sync::OnceLock;
 use bevy::log::{Level, LogPlugin};
 use bevy::prelude::*;
 use crossbeam_channel::Sender;
+
 #[cfg(target_arch = "wasm32")]
-use crossbeam_channel::{Receiver, TryRecvError};
-use gloo::events::{EventListener, EventListenerOptions};
-use web_sys::wasm_bindgen::JsCast;
-use web_sys::{DragEvent, File, FileReader};
+use {
+    crossbeam_channel::{Receiver, TryRecvError},
+    gloo::events::{EventListener, EventListenerOptions},
+    gloo::utils::format::JsValueSerdeExt,
+    web_sys::wasm_bindgen::{JsCast, JsValue},
+    web_sys::{CustomEvent, CustomEventInit, DragEvent, File, FileReader},
+};
 
 pub(crate) mod io;
 pub(crate) mod ui;
@@ -162,7 +166,30 @@ fn window() -> Window {
     }
 }
 
-// #[cfg(target_arch = "wasm32")]
+#[cfg(target_arch = "wasm32")]
+pub fn get_web_theme() -> Option<String> {
+    let doc = gloo::utils::document();
+    let theme = doc.document_element()?.get_attribute("data-theme");
+    Some(theme.unwrap_or_else(|| "dark".to_string()))
+}
+
+#[cfg(target_arch = "wasm32")]
+pub fn set_web_theme(theme: &str) -> Option<()> {
+    let doc = gloo::utils::document();
+    let normalized = if theme == "light" { "light" } else { "dark" };
+    doc.document_element()?
+        .set_attribute("data-theme", normalized)
+        .ok()?;
+
+    let event_init = CustomEventInit::new();
+    event_init.set_detail(&JsValue::from_serde(&serde_json::json!({ "theme": normalized })).ok()?);
+    let event = CustomEvent::new_with_event_init_dict("vizmat-theme-change", &event_init).ok()?;
+    web_sys::window()?.dispatch_event(&event).ok()?;
+
+    Some(())
+}
+
+#[cfg(target_arch = "wasm32")]
 pub fn register_drop(id: &str) -> Option<()> {
     let doc = gloo::utils::document();
     let element = doc.get_element_by_id(id)?;

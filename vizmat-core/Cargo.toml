@@ -52,7 +52,6 @@ serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 crossbeam-channel = "0.5"
 gloo = "0.11.0"
-web-sys = { version = "0.3", features = ["DataTransfer", "DataTransferItem", "DataTransferItemList", "DragEvent"] }
 tracing = "0.1.44"
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
@@ -64,7 +63,18 @@ reqwest = { version = "0.12", default-features = false, features = ["blocking", 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 wasm-bindgen = "0.2"
 wasm-bindgen-futures = "0.4"
-web-sys = { version = "0.3", features = ["WebSocket", "MessageEvent", "ErrorEvent", "CloseEvent"] }
+web-sys = { version = "0.3", features = [
+    "DataTransfer", 
+    "DataTransferItem", 
+    "DataTransferItemList", 
+    "DragEvent",
+    "WebSocket", 
+    "MessageEvent", 
+    "ErrorEvent", 
+    "CloseEvent", 
+    "CustomEvent", 
+    "CustomEventInit",
+] }
 js-sys = "0.3"
 
 [features]
