@@ -3,11 +3,15 @@ use std::sync::OnceLock;
 use bevy::log::{Level, LogPlugin};
 use bevy::prelude::*;
 use crossbeam_channel::Sender;
+
 #[cfg(target_arch = "wasm32")]
-use crossbeam_channel::{Receiver, TryRecvError};
-use gloo::events::{EventListener, EventListenerOptions};
-use web_sys::wasm_bindgen::JsCast;
-use web_sys::{DragEvent, File, FileReader};
+use {
+    crossbeam_channel::{Receiver, TryRecvError},
+    gloo::events::{EventListener, EventListenerOptions},
+    gloo::utils::format::JsValueSerdeExt,
+    web_sys::wasm_bindgen::{JsCast, JsValue},
+    web_sys::{CustomEvent, CustomEventInit, DragEvent, File, FileReader},
+};
 
 pub(crate) mod io;
 pub(crate) mod ui;
@@ -162,7 +166,29 @@ fn window() -> Window {
     }
 }
 
-// #[cfg(target_arch = "wasm32")]
+#[cfg(target_arch = "wasm32")]
+pub fn get_web_theme() -> Option<String> {
+    let doc = gloo::utils::document();
+    let theme = doc.document_element()?.get_attribute("data-theme");
+    Some(theme.unwrap_or_else(|| "dark".to_string()))
+}
+
+#[cfg(target_arch = "wasm32")]
+pub fn set_web_theme(theme: &str) -> Option<()> {
+    let doc = gloo::utils::document();
+    let normalized = if theme == "light" { "light" } else { "dark" };
+    doc.document_element()?.set_attribute("data-theme", normalized).ok()?;
+    
+    let event_init = CustomEventInit::new();
+    event_init.set_detail(&JsValue::from_serde(&serde_json::json!({ "theme": normalized })).ok()?);
+    let event = CustomEvent::new_with_event_init_dict("vizmat-theme-change", &event_init).ok()?;
+    web_sys::window()?.dispatch_event(&event).ok()?;
+
+    Some(())
+}
+
+
+#[cfg(target_arch = "wasm32")]
 pub fn register_drop(id: &str) -> Option<()> {
     let doc = gloo::utils::document();
     let element = doc.get_element_by_id(id)?;
@@ -425,11 +451,11 @@ fn web_event_observer(
                 );
                 return;
             }
-            let contents = String::from_utf8_lossy(data);
+            let contents = String::from_utf8_lossy(&data);
             match parse_structure_by_extension(ext, &contents) {
                 Ok(crystal) => {
                     let crystal_resource = crystal.clone();
-                    set_file_loaded_status(&mut file_drag_drop, name, crystal);
+                    set_file_loaded_status(&mut file_drag_drop, &name, crystal);
                     commands.insert_resource(crystal_resource);
                     next_ui_state.set(AppUiState::Running);
                 }
@@ -444,7 +470,7 @@ fn web_event_observer(
             info!("loaded file mime type: '{mime_type}'");
         }
         WebEvent::CatalogLoadError { path, message } => {
-            let name = path.rsplit('/').next().unwrap_or(path);
+            let name = path.rsplit('/').next().unwrap_or(&path);
             file_drag_drop.status_message = format!("Load error ({name}): {message}");
             file_drag_drop.status_kind = crate::io::FileStatusKind::Error;
             eprintln!("Failed to load catalog particle '{path}': {message}");

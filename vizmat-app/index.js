@@ -1,21 +1,33 @@
-const THEME_DARK = "dark";
-const THEME_LIGHT = "light";
+(function () {
+const loader = document.getElementById("app-loader");
+const status = document.getElementById("loader-status");
+const canvas = document.getElementById("bevy-canvas");
+if (!loader) return;
 
-const resolveInitialTheme = () => THEME_DARK;
+if (canvas) {
+  // Keep RMB free for in-app panning instead of opening browser context menu.
+  canvas.addEventListener("contextmenu", (event) => event.preventDefault());
+  // Ensure keyboard/mouse interactions target the Bevy canvas after any click.
+  canvas.addEventListener("mousedown", () => canvas.focus());
+}
 
-const applyTheme = (theme) => {
-  const normalized = theme === THEME_LIGHT ? THEME_LIGHT : THEME_DARK;
-  document.documentElement.dataset.theme = normalized;
-  window.dispatchEvent(new CustomEvent("vizmat-theme-change", { detail: { theme: normalized } }));
-  return normalized;
+const hideLoader = () => {
+  loader.classList.add("hidden");
+  window.setTimeout(() => loader.remove(), 260);
 };
 
-const currentTheme = () =>
-  document.documentElement.dataset.theme || resolveInitialTheme();
+// Trunk injects a startup script and emits this event after WASM init.
+// If the event fired before this listener was added, hide immediately.
+if (window.wasmBindings) {
+  hideLoader();
+} else {
+  window.addEventListener("TrunkApplicationStarted", hideLoader, { once: true });
+}
 
-window.vizmatGetTheme = () => currentTheme();
-window.vizmatSetTheme = (theme) => applyTheme(theme);
-window.vizmatToggleTheme = () =>
-  applyTheme(currentTheme() === THEME_LIGHT ? THEME_DARK : THEME_LIGHT);
-
-applyTheme(resolveInitialTheme());
+// Fallback so users are not stuck forever if startup event never fires.
+window.setTimeout(() => {
+  if (!loader.classList.contains("hidden") && status) {
+    status.textContent = "Still loading... first run can take longer.";
+  }
+}, 9000);
+})();
