@@ -47,12 +47,12 @@ const GIZMO_VIEWPORT_SIZE_PX: u32 = 200;
 const GIZMO_VIEWPORT_MARGIN_PX: u32 = 10;
 const DEFAULT_PARTICLE_PATH: &str = "compounds/water.xyz";
 #[cfg(target_arch = "wasm32")]
-const DEFAULT_PARTICLES_ASSET_BASE_URL: &str = "assets/particles";
+const DEFAULT_PARTICLES_ASSET_BASE_URL: &str = "assets/structures";
 const DEFAULT_PARTICLES_REMOTE_BASE_URL: &str =
     "https://raw.githubusercontent.com/syzer/vizmat-particles/main";
 const EMBEDDED_PARTICLE_LIST: &str = include_str!(concat!(
     env!("CARGO_MANIFEST_DIR"),
-    "/../vizmat-app/assets/particles/list.txt"
+    "/../vizmat-app/assets/structures/list.txt"
 ));
 
 #[derive(States, Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
@@ -846,7 +846,7 @@ fn filtered_particle_entries(state: &ParticlePickerState) -> Vec<String> {
 fn particles_local_dir() -> &'static str {
     option_env!("VIZMAT_PARTICLES_LOCAL_DIR").unwrap_or(concat!(
         env!("CARGO_MANIFEST_DIR"),
-        "/../vizmat-app/assets/particles"
+        "/../vizmat-app/assets/structures"
     ))
 }
 
