@@ -1,57 +1,14 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" data-theme="dark">
   <head>
     <meta charset="UTF-8">
     <title>vizmat: a cross platform crystal visualizer</title>
-    <style>
-      body {
-        margin: 0;
-        font-family: sans-serif;
-        display: flex;
-        flex-direction: column;
-        align-items: center;
-      }
-      header {
-        width: 80%; /* header less than full width if desired */
-        max-width: 1200px; /* optional max width */
-        color: white;
-        display: flex;
-        justify-content: flex-end; /* push content to the right */
-        align-items: center;
-        padding: 0.5rem 1rem;
-        height: 50px;
-        margin-top: 0;
-        margin-bottom: 0.5rem;
-        box-sizing: border-box;
-      }
-      header h1 {
-        font-size: 0.5rem; /* smaller than before */
-        font-weight: 500;
-        margin: 0;
-        font-family: 'Roboto', sans-serif;
-        letter-spacing: 0.5px; /* subtle style */
-      }
-      header a {
-        color: black;
-        text-decoration: none;
-        display: flex;
-        align-items: center;
-      }
-      header a img {
-        height: 24px;
-        margin-left: 0.5rem;
-      }
-      #canvas-container {
-        width: 80%; /* same width as header */
-        max-width: 1200px;
-      }
-      canvas {
-        width: 100%; /* fill the container */
-        height: 80vh; /* or any desired height */
-        display: block;
-      }
-    </style>
-    <script type="module" crossorigin src="/vizmat/assets/index-CEX6RlNO.js"></script>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;700&display=swap" rel="stylesheet">
+    <script type="module" crossorigin src="/vizmat/assets/index-B4eNslWE.js"></script>
+    <link rel="stylesheet" crossorigin href="/vizmat/assets/index-UKwtC_F_.css">
   </head>
   <body>
     <link
@@ -61,13 +18,34 @@
     data-wasm-opt-params="--enable-bulk-memory --enable-nontrapping-float-to-int"
     data-bin="vizmat-app"
     data-cargo-no-default-features="true" />
-    <h1>molecule🧬/crystal🧊 visualizer go brrr 👀</h1>
+    <template id="trunk-only">
+      <link data-trunk rel="rust" href="Cargo.toml" data-bin="vizmat-app" />
+      <link data-trunk rel="copy-dir" href="assets" />
+      <link data-trunk rel="copy-file" href="data:text/javascript;base64,aW1wb3J0IGluaXQgZnJvbSAiLi92aXptYXRfY29yZS5qcyI7CgooYXN5bmMgKCkgPT4gewogIGNvbnN0IGxvYWRlciA9IGRvY3VtZW50LmdldEVsZW1lbnRCeUlkKCJhcHAtbG9hZGVyIik7CiAgY29uc3Qgc3RhdHVzID0gZG9jdW1lbnQuZ2V0RWxlbWVudEJ5SWQoImxvYWRlci1zdGF0dXMiKTsKICBjb25zdCBjYW52YXMgPSBkb2N1bWVudC5nZXRFbGVtZW50QnlJZCgiYmV2eS1jYW52YXMiKTsKCiAgaWYgKCFsb2FkZXIpIHJldHVybjsKCiAgaWYgKGNhbnZhcykgewogICAgY2FudmFzLmFkZEV2ZW50TGlzdGVuZXIoImNvbnRleHRtZW51IiwgKGV2ZW50KSA9PiBldmVudC5wcmV2ZW50RGVmYXVsdCgpKTsKICAgIGNhbnZhcy5hZGRFdmVudExpc3RlbmVyKCJtb3VzZWRvd24iLCAoKSA9PiBjYW52YXMuZm9jdXMoKSk7CiAgfQoKICBjb25zdCBoaWRlTG9hZGVyID0gKCkgPT4gewogICAgbG9hZGVyLmNsYXNzTGlzdC5hZGQoImhpZGRlbiIpOwogICAgd2luZG93LnNldFRpbWVvdXQoKCkgPT4gbG9hZGVyLnJlbW92ZSgpLCAyNjApOwogIH07CgogIC8vIEluaXRpYWxpemUgV0FTTSBtb2R1bGUKICB0cnkgewogICAgYXdhaXQgaW5pdCgpOyAvLyBUaGlzIHdhaXRzIGZvciBXQVNNIHRvIGxvYWQKICAgIGhpZGVMb2FkZXIoKTsKICB9IGNhdGNoIChlKSB7CiAgICBjb25zb2xlLmVycm9yKCJGYWlsZWQgdG8gaW5pdGlhbGl6ZSBXQVNNIG1vZHVsZToiLCBlKTsKICAgIGlmIChzdGF0dXMpIHsKICAgICAgc3RhdHVzLnRleHRDb250ZW50ID0gIkZhaWxlZCB0byBsb2FkIFdBU00gbW9kdWxlLiI7CiAgICB9CiAgfQoKICAvLyBGYWxsYmFjayBpZiBXQVNNIHRha2VzIHRvbyBsb25nCiAgd2luZG93LnNldFRpbWVvdXQoKCkgPT4gewogICAgaWYgKCFsb2FkZXIuY2xhc3NMaXN0LmNvbnRhaW5zKCJoaWRkZW4iKSAmJiBzdGF0dXMpIHsKICAgICAgc3RhdHVzLnRleHRDb250ZW50ID0gIlN0aWxsIGxvYWRpbmcuLi4gZmlyc3QgcnVuIGNhbiB0YWtlIGxvbmdlci4iOwogICAgfQogIH0sIDkwMDApOwp9KSgpOwo=" />
+    </template>
+    <h1 class="site-title">vizmat <span>molecule / crystal</span> visual lab</h1>
     <header>
       <a href="https://github.com/rs4rse/vizmat" target="_blank">
-        like me ──★ ˙🍓 ̟ !!
+        Star on GitHub
         <img src="https://img.shields.io/github/stars/rs4rse/vizmat" alt="GitHub stars">
       </a>
     </header>
-    <canvas id="bevy-canvas"></canvas>
+    <div class="hint">
+      <strong>Doom-like controls:</strong>
+      <span class="key">W/A/S/D</span> move,
+      <span class="key">Shift</span> sprint,
+      <span class="key">Q/E</span> rotate
+    </div>
+    <div id="app-loader" class="loader" aria-live="polite">
+      <p class="loader-brand">vizmat <span>molecule / crystal</span> visual lab</p>
+      <div class="loader-card">
+        <div class="spinner"></div>
+        <p class="loader-title">Loading vizmat</p>
+        <p id="loader-status" class="loader-status">Compiling shaders and booting WebAssembly...</p>
+      </div>
+    </div>
+    <div class="canvas-shell">
+      <canvas id="bevy-canvas"></canvas>
+    </div>
   </body>
 </html>
