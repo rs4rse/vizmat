@@ -16,10 +16,14 @@
     data-wasm-opt-params="--enable-bulk-memory --enable-nontrapping-float-to-int"
     data-bin="vizmat-app"
     data-cargo-no-default-features="true" />
-    <link data-trunk rel="copy-dir" href="assets" />
-    <link data-trunk rel="copy-file" href="index.js" />
-    <link data-trunk rel="copy-file" href="style.css" />
+    <template id="trunk-only">
+      <link data-trunk rel="rust" href="Cargo.toml" data-bin="vizmat-app" />
+      <link data-trunk rel="copy-dir" href="assets" />
+      <link data-trunk rel="copy-file" href="index.js" />
+      <link data-trunk rel="copy-file" href="style.css" />
+    </template>
     <link href="style.css" rel="stylesheet" />
+    <script type="module" src="./index.js"></script>
     <h1 class="site-title">vizmat <span>molecule / crystal</span> visual lab</h1>
     <header>
       <a href="https://github.com/rs4rse/vizmat" target="_blank">
@@ -44,6 +48,5 @@
     <div class="canvas-shell">
       <canvas id="bevy-canvas"></canvas>
     </div>
-    <script type="module" src="./index.js"></script>
   </body>
 </html>

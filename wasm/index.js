@@ -1,31 +1,37 @@
-import init, { start } from "./vizmat_core.js";
+import init from "./vizmat_core.js";
 
-async function main() {
-    const loader = document.getElementById("app-loader");
-    const status = document.getElementById("loader-status");
+(async () => {
+  const loader = document.getElementById("app-loader");
+  const status = document.getElementById("loader-status");
+  const canvas = document.getElementById("bevy-canvas");
 
-    const setStatus = (text) => {
-        if (status) {
-            status.textContent = text;
-        }
-    };
+  if (!loader) return;
 
-    try {
-        setStatus("Downloading and initializing WebAssembly...");
-        await init();
-        setStatus("Starting renderer...");
-        if (loader) {
-            loader.classList.add("hidden");
-            window.setTimeout(() => loader.remove(), 260);
-        }
-        start();
-    } catch (error) {
-        console.error("Failed to start vizmat WASM:", error);
-        setStatus("Failed to load. Hard refresh and try again.");
-        if (loader) {
-            loader.classList.remove("hidden");
-        }
+  if (canvas) {
+    canvas.addEventListener("contextmenu", (event) => event.preventDefault());
+    canvas.addEventListener("mousedown", () => canvas.focus());
+  }
+
+  const hideLoader = () => {
+    loader.classList.add("hidden");
+    window.setTimeout(() => loader.remove(), 260);
+  };
+
+  // Initialize WASM module
+  try {
+    await init(); // This waits for WASM to load
+    hideLoader();
+  } catch (e) {
+    console.error("Failed to initialize WASM module:", e);
+    if (status) {
+      status.textContent = "Failed to load WASM module.";
     }
-}
+  }
 
-main();
+  // Fallback if WASM takes too long
+  window.setTimeout(() => {
+    if (!loader.classList.contains("hidden") && status) {
+      status.textContent = "Still loading... first run can take longer.";
+    }
+  }, 9000);
+})();
