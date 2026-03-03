@@ -5,6 +5,8 @@ compounds/cyclosporin_a.sdf
 compounds/esomeprazole.xyz
 compounds/naproxen.xyz
 compounds/vancomycin.sdf
+proteins/1BNA.pdb
+proteins/1BNA.xyz
 proteins/1CRN.pdb
 proteins/1CRN.xyz
 proteins/1UBQ.pdb
@@ -13,5 +15,9 @@ proteins/3J3A.pdb
 proteins/3J3A.xyz
 proteins/4HHB.pdb
 proteins/4HHB.xyz
+proteins/6M0J.pdb
+proteins/6M0J.xyz
 proteins/6VXX.pdb
 proteins/6VXX.xyz
+proteins/7KLG.pdb
+proteins/7KLG.xyz
