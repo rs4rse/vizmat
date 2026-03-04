@@ -1,7 +1,7 @@
 (function () {
+  const canvas = document.getElementById("bevy-canvas");
   const loader = document.getElementById("app-loader");
   const status = document.getElementById("loader-status");
-  const canvas = document.getElementById("bevy-canvas");
   if (!loader) return;
 
   if (canvas) {

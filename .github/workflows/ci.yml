@@ -82,3 +82,22 @@ jobs:
           components: rustfmt
       - name: Run cargo fmt
         run: cargo fmt --all -- --check
+
+  # Run wasm compile checks to catch web-only type mismatches.
+  wasm_check:
+    name: Wasm Compile
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - name: Install stable toolchain
+        uses: dtolnay/rust-toolchain@stable
+      - name: Check wasm target
+        run: rustup target add wasm32-unknown-unknown
+      - name: Run wasm compile checks
+        run: |
+          cargo check -p vizmat-core --target wasm32-unknown-unknown --no-default-features
+          cargo check -p vizmat-app --target wasm32-unknown-unknown --no-default-features

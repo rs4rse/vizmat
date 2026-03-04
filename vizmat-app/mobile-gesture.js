@@ -1,5 +1,45 @@
 (function () {
   const canvas = document.getElementById("bevy-canvas");
+  const pickerInput = document.getElementById("picker-keyboard-input");
+
+  const emitPickerQuery = (action) => {
+    if (!pickerInput) return;
+    const query = pickerInput.value || "";
+    window.dispatchEvent(
+      new CustomEvent("vizmat-picker-query", {
+        detail: {
+          query,
+          action,
+        },
+      }),
+    );
+  };
+
+  if (pickerInput) {
+    window.addEventListener("vizmat-structure-picker-open", () => {
+      pickerInput.value = "";
+      try {
+        pickerInput.focus({ preventScroll: true });
+      } catch (error) {
+        pickerInput.focus();
+      }
+      emitPickerQuery("change");
+    });
+
+    window.addEventListener("vizmat-structure-picker-close", () => {
+      pickerInput.blur();
+      pickerInput.value = "";
+    });
+
+    pickerInput.addEventListener("input", () => emitPickerQuery("change"));
+    pickerInput.addEventListener("keydown", (event) => {
+      if (event.key === "Enter") {
+        event.preventDefault();
+        emitPickerQuery("submit");
+        event.stopPropagation();
+      }
+    });
+  }
 
   const emitTouchGesture = (gesture) => {
     window.dispatchEvent(

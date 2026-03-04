@@ -30,6 +30,11 @@ jobs:
         run: |
           curl https://drager.github.io/wasm-pack/installer/init.sh -sSf | bash
 
+      - name: Run wasm compile checks
+        run: |
+          cargo check -p vizmat-core --target wasm32-unknown-unknown --no-default-features
+          cargo check -p vizmat-app --target wasm32-unknown-unknown --no-default-features
+
       - name: Build WASM
         run: |
           if [ "${{ github.ref }}" = "refs/heads/main" ]; then
