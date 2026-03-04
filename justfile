@@ -61,6 +61,11 @@ watch:
 bench:
     cargo bench -p vizmat-core --bench bond_cache
 
+wasm-check:
+    rustup target add wasm32-unknown-unknown
+    cargo check -p vizmat-core --target wasm32-unknown-unknown --no-default-features
+    cargo check -p vizmat-app --target wasm32-unknown-unknown --no-default-features
+
 wasm:
     rustup target add wasm32-unknown-unknown --toolchain nightly-aarch64-apple-darwin
     cd vizmat-app && PATH="$HOME/.cargo/bin:$PATH" NO_COLOR=false trunk serve --port 8082

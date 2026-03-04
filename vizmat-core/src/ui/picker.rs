@@ -97,9 +97,7 @@ pub(crate) fn set_structure_picker_keyboard_active(visible: bool) {
     }
 
     #[cfg(target_arch = "wasm32")]
-    let Some(window) = window() else {
-        return;
-    };
+    let window = window();
 
     #[cfg(target_arch = "wasm32")]
     let event_name = if visible {
