@@ -149,37 +149,43 @@ pub(crate) fn setup_structure_picker_panel(
                         justify_content: JustifyContent::SpaceBetween,
                         border: UiRect::all(Val::Px(1.0)),
                         padding: UiRect::axes(Val::Px(8.0), Val::Px(4.0)),
-                        column_gap: Val::Px(6.0),
+                        column_gap: Val::Px(4.0),
                         ..default()
                     },
                     BorderColor(palette.border),
                     BackgroundColor(palette.bar_bg),
                 ))
                 .with_children(|row| {
-                    row.spawn((
-                        Node {
-                            flex_grow: 1.0,
-                            min_width: Val::Px(0.0),
-                            ..default()
-                        },
-                        Text::new("Search structures..."),
-                        TextFont {
-                            font_size: 11.0,
-                            ..default()
-                        },
-                        TextColor(palette.text_muted),
-                        StructurePickerQueryText,
-                    ));
-                    row.spawn((
-                        Text::new("|"),
-                        TextFont {
-                            font_size: 11.0,
-                            ..default()
-                        },
-                        TextColor(palette.text_muted),
-                        Visibility::Hidden,
-                        StructurePickerQueryCaret,
-                    ));
+                    row.spawn((Node {
+                        flex_grow: 1.0,
+                        min_width: Val::Px(0.0),
+                        display: Display::Flex,
+                        flex_direction: FlexDirection::Row,
+                        align_items: AlignItems::Center,
+                        column_gap: Val::Px(0.0),
+                        ..default()
+                    },))
+                        .with_children(|query_group| {
+                            query_group.spawn((
+                                Text::new("Search structures..."),
+                                TextFont {
+                                    font_size: 11.0,
+                                    ..default()
+                                },
+                                TextColor(palette.text_muted),
+                                StructurePickerQueryText,
+                            ));
+                            query_group.spawn((
+                                Text::new("|"),
+                                TextFont {
+                                    font_size: 11.0,
+                                    ..default()
+                                },
+                                TextColor(palette.text_muted),
+                                Visibility::Hidden,
+                                StructurePickerQueryCaret,
+                            ));
+                        });
                     row.spawn((
                         Text::new("\u{f002}"),
                         TextFont {
