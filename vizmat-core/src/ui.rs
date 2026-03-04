@@ -107,6 +107,37 @@ pub(crate) struct GizmoCamera;
 #[derive(Component)]
 pub(crate) struct FileUploadText;
 
+#[derive(Component)]
+pub(crate) struct FileUploadPopupRoot;
+
+#[derive(Component)]
+pub(crate) struct FileUploadPopupDismissButton;
+
+#[derive(Component)]
+pub(crate) struct FileUploadPopupBackdrop;
+
+#[derive(Component)]
+pub(crate) struct FileUploadPopupPanel;
+
+#[derive(Resource)]
+pub(crate) struct FileUploadPopupState {
+    hide_after: Option<f64>,
+    dismissed: bool,
+    last_status_message: String,
+    last_status_kind: FileStatusKind,
+}
+
+impl Default for FileUploadPopupState {
+    fn default() -> Self {
+        Self {
+            hide_after: None,
+            dismissed: true,
+            last_status_message: String::new(),
+            last_status_kind: FileStatusKind::Info,
+        }
+    }
+}
+
 // Component for load default button
 #[derive(Component)]
 pub(crate) struct LoadDefaultButton;
@@ -131,6 +162,18 @@ pub(crate) struct HudButton;
 
 #[derive(Component)]
 pub(crate) struct HudButtonLabel;
+
+#[derive(Component)]
+pub(crate) struct HudButtonIcon;
+
+#[derive(Component)]
+pub(crate) struct LoadStructureLabel;
+
+#[derive(Component)]
+pub(crate) struct ResetCameraLabel;
+
+#[derive(Component)]
+pub(crate) struct LightAttachmentLabel;
 
 #[derive(Component)]
 pub(crate) struct HudHelpText;
@@ -740,6 +783,7 @@ type HudBgQueries<'w, 's> = (
 
 type HudTextQueries<'w, 's> = (
     Query<'w, 's, &'static mut TextColor, With<HudButtonLabel>>,
+    Query<'w, 's, &'static mut TextColor, With<HudButtonIcon>>,
     Query<'w, 's, &'static mut TextColor, (With<FileUploadText>, Without<HudButtonLabel>)>,
     Query<'w, 's, &'static mut TextColor, With<HudHelpText>>,
     Query<'w, 's, &'static mut TextColor, With<HudLegendText>>,
@@ -1147,15 +1191,30 @@ pub(crate) fn setup_file_ui(mut commands: Commands, mut font_assets: ResMut<Asse
     });
     commands.insert_resource(StructurePickerCaretState::default());
     commands.insert_resource(StructurePickerSelectionState::default());
+    commands.insert_resource(FileUploadPopupState::default());
     let p = theme_palette(theme.mode);
     let is_mobile = {
         #[cfg(target_arch = "wasm32")]
         let is_mobile = window()
-            .and_then(|window| window.navigator().user_agent().ok())
-            .is_some_and(|ua| {
-                let ua = ua.to_lowercase();
-                ua.contains("mobile") || ua.contains("android") || ua.contains("iphone")
-            });
+            .and_then(|window| {
+                let ua = window
+                    .navigator()
+                    .user_agent()
+                    .ok()
+                    .unwrap_or_default()
+                    .to_lowercase();
+                let ua_matches_mobile = ua.contains("mobile")
+                    || ua.contains("android")
+                    || ua.contains("iphone")
+                    || ua.contains("ipad");
+                let width_is_small = window
+                    .inner_width()
+                    .ok()
+                    .and_then(|w| w.as_f64())
+                    .is_some_and(|w| w <= 768.0);
+                Some(ua_matches_mobile || width_is_small)
+            })
+            .unwrap_or(false);
 
         #[cfg(not(target_arch = "wasm32"))]
         let is_mobile = false;
@@ -1211,7 +1270,13 @@ pub(crate) fn setup_file_ui(mut commands: Commands, mut font_assets: ResMut<Asse
                 row.spawn((
                     Button,
                     Node {
-                        padding: UiRect::axes(Val::Px(10.0), Val::Px(6.0)),
+                        padding: if is_mobile {
+                            UiRect::axes(Val::Px(8.0), Val::Px(5.0))
+                        } else {
+                            UiRect::axes(Val::Px(10.0), Val::Px(6.0))
+                        },
+                        width: if is_mobile { Val::Px(96.0) } else { Val::Auto },
+                        height: if is_mobile { Val::Px(30.0) } else { Val::Auto },
                         border: UiRect::all(Val::Px(1.0)),
                         ..default()
                     },
@@ -1222,21 +1287,39 @@ pub(crate) fn setup_file_ui(mut commands: Commands, mut font_assets: ResMut<Asse
                 ))
                 .with_children(|button| {
                     button.spawn((
-                        Text::new("Load Structure"),
+                        Text::new(if is_mobile { "Load" } else { "Load Structure" }),
                         TextFont {
                             font: default(),
-                            font_size: 12.0,
+                            font_size: if is_mobile { 11.0 } else { 12.0 },
                             ..default()
+                        },
+                        if is_mobile {
+                            TextLayout::new_with_no_wrap()
+                        } else {
+                            default()
                         },
                         TextColor(p.text),
                         HudButtonLabel,
+                        LoadStructureLabel,
                     ));
                 });
 
                 row.spawn((
                     Button,
                     Node {
-                        padding: UiRect::axes(Val::Px(10.0), Val::Px(6.0)),
+                        padding: if is_mobile {
+                            UiRect::ZERO
+                        } else {
+                            UiRect::axes(Val::Px(10.0), Val::Px(6.0))
+                        },
+                        width: if is_mobile { Val::Px(30.0) } else { Val::Auto },
+                        height: if is_mobile { Val::Px(30.0) } else { Val::Auto },
+                        justify_content: if is_mobile {
+                            JustifyContent::Center
+                        } else {
+                            JustifyContent::FlexStart
+                        },
+                        align_items: AlignItems::Center,
                         border: UiRect::all(Val::Px(1.0)),
                         ..default()
                     },
@@ -1249,9 +1332,35 @@ pub(crate) fn setup_file_ui(mut commands: Commands, mut font_assets: ResMut<Asse
                 ))
                 .with_children(|button| {
                     button.spawn((
+                        Text::new("\u{f53f}"),
+                        TextFont {
+                            font: icon_font.clone(),
+                            font_size: 16.0,
+                            ..default()
+                        },
+                        TextColor(p.text),
+                        Node {
+                            display: if is_mobile {
+                                Display::Flex
+                            } else {
+                                Display::None
+                            },
+                            ..default()
+                        },
+                        HudButtonIcon,
+                    ));
+                    button.spawn((
                         Text::new("Color: Element"),
                         TextFont {
                             font_size: 12.0,
+                            ..default()
+                        },
+                        Node {
+                            display: if is_mobile {
+                                Display::None
+                            } else {
+                                Display::Flex
+                            },
                             ..default()
                         },
                         TextColor(p.text),
@@ -1263,7 +1372,19 @@ pub(crate) fn setup_file_ui(mut commands: Commands, mut font_assets: ResMut<Asse
                 row.spawn((
                     Button,
                     Node {
-                        padding: UiRect::axes(Val::Px(10.0), Val::Px(6.0)),
+                        padding: if is_mobile {
+                            UiRect::ZERO
+                        } else {
+                            UiRect::axes(Val::Px(10.0), Val::Px(6.0))
+                        },
+                        width: if is_mobile { Val::Px(30.0) } else { Val::Auto },
+                        height: if is_mobile { Val::Px(30.0) } else { Val::Auto },
+                        justify_content: if is_mobile {
+                            JustifyContent::Center
+                        } else {
+                            JustifyContent::FlexStart
+                        },
+                        align_items: AlignItems::Center,
                         border: UiRect::all(Val::Px(1.0)),
                         ..default()
                     },
@@ -1276,21 +1397,60 @@ pub(crate) fn setup_file_ui(mut commands: Commands, mut font_assets: ResMut<Asse
                 ))
                 .with_children(|button| {
                     button.spawn((
+                        Text::new("\u{f021}"),
+                        TextFont {
+                            font: icon_font.clone(),
+                            font_size: 16.0,
+                            ..default()
+                        },
+                        TextColor(p.text),
+                        Node {
+                            display: if is_mobile {
+                                Display::Flex
+                            } else {
+                                Display::None
+                            },
+                            ..default()
+                        },
+                        HudButtonIcon,
+                    ));
+                    button.spawn((
                         Text::new("Reset View"),
                         TextFont {
                             font: default(),
                             font_size: 12.0,
                             ..default()
                         },
+                        Node {
+                            display: if is_mobile {
+                                Display::None
+                            } else {
+                                Display::Flex
+                            },
+                            ..default()
+                        },
                         TextColor(p.text),
                         HudButtonLabel,
+                        ResetCameraLabel,
                     ));
                 });
 
                 row.spawn((
                     Button,
                     Node {
-                        padding: UiRect::axes(Val::Px(10.0), Val::Px(6.0)),
+                        padding: if is_mobile {
+                            UiRect::ZERO
+                        } else {
+                            UiRect::axes(Val::Px(10.0), Val::Px(6.0))
+                        },
+                        width: if is_mobile { Val::Px(30.0) } else { Val::Auto },
+                        height: if is_mobile { Val::Px(30.0) } else { Val::Auto },
+                        justify_content: if is_mobile {
+                            JustifyContent::Center
+                        } else {
+                            JustifyContent::FlexStart
+                        },
+                        align_items: AlignItems::Center,
                         border: UiRect::all(Val::Px(1.0)),
                         ..default()
                     },
@@ -1303,21 +1463,60 @@ pub(crate) fn setup_file_ui(mut commands: Commands, mut font_assets: ResMut<Asse
                 ))
                 .with_children(|button| {
                     button.spawn((
+                        Text::new("\u{f0eb}"),
+                        TextFont {
+                            font: icon_font.clone(),
+                            font_size: 16.0,
+                            ..default()
+                        },
+                        TextColor(p.text),
+                        Node {
+                            display: if is_mobile {
+                                Display::Flex
+                            } else {
+                                Display::None
+                            },
+                            ..default()
+                        },
+                        HudButtonIcon,
+                    ));
+                    button.spawn((
                         Text::new("Light: Static"),
                         TextFont {
                             font: default(),
                             font_size: 12.0,
                             ..default()
                         },
+                        Node {
+                            display: if is_mobile {
+                                Display::None
+                            } else {
+                                Display::Flex
+                            },
+                            ..default()
+                        },
                         TextColor(p.text),
                         HudButtonLabel,
+                        LightAttachmentLabel,
                     ));
                 });
 
                 row.spawn((
                     Button,
                     Node {
-                        padding: UiRect::axes(Val::Px(10.0), Val::Px(6.0)),
+                        padding: if is_mobile {
+                            UiRect::ZERO
+                        } else {
+                            UiRect::axes(Val::Px(10.0), Val::Px(6.0))
+                        },
+                        width: if is_mobile { Val::Px(30.0) } else { Val::Auto },
+                        height: if is_mobile { Val::Px(30.0) } else { Val::Auto },
+                        justify_content: if is_mobile {
+                            JustifyContent::Center
+                        } else {
+                            JustifyContent::FlexStart
+                        },
+                        align_items: AlignItems::Center,
                         border: UiRect::all(Val::Px(1.0)),
                         ..default()
                     },
@@ -1330,9 +1529,35 @@ pub(crate) fn setup_file_ui(mut commands: Commands, mut font_assets: ResMut<Asse
                 ))
                 .with_children(|button| {
                     button.spawn((
-                        Text::new("Bonds: On"),
+                        Text::new("\u{f0c1}"),
+                        TextFont {
+                            font: icon_font.clone(),
+                            font_size: 16.0,
+                            ..default()
+                        },
+                        TextColor(p.text),
+                        Node {
+                            display: if is_mobile {
+                                Display::Flex
+                            } else {
+                                Display::None
+                            },
+                            ..default()
+                        },
+                        HudButtonIcon,
+                    ));
+                    button.spawn((
+                        Text::new("Bonds: Off"),
                         TextFont {
                             font_size: 12.0,
+                            ..default()
+                        },
+                        Node {
+                            display: if is_mobile {
+                                Display::None
+                            } else {
+                                Display::Flex
+                            },
                             ..default()
                         },
                         TextColor(p.text),
@@ -1393,18 +1618,6 @@ pub(crate) fn setup_file_ui(mut commands: Commands, mut font_assets: ResMut<Asse
                 BackgroundColor(Color::NONE),
             ))
             .with_children(|right| {
-                right.spawn((
-                    Text::new(format!("Drop {} file", SUPPORTED_EXTENSIONS_HELP)),
-                    TextFont {
-                        font_size: 12.0,
-                        ..default()
-                    },
-                    Visibility::Visible,
-                    TextColor(p.text),
-                    FileUploadText,
-                    HiddenOnStartup,
-                ));
-
                 right
                     .spawn((
                         Button,
@@ -1436,6 +1649,96 @@ pub(crate) fn setup_file_ui(mut commands: Commands, mut font_assets: ResMut<Asse
                         ));
                     });
             });
+        });
+
+    commands
+        .spawn((
+            Node {
+                position_type: PositionType::Absolute,
+                top: Val::Px(0.0),
+                left: Val::Px(0.0),
+                right: Val::Px(0.0),
+                bottom: Val::Px(0.0),
+                display: Display::None,
+                justify_content: JustifyContent::Center,
+                align_items: AlignItems::Center,
+                ..default()
+            },
+            GlobalZIndex(25),
+            FocusPolicy::Pass,
+            BackgroundColor(Color::NONE),
+            FileUploadPopupRoot,
+        ))
+        .with_children(|overlay| {
+            overlay.spawn((
+                Button,
+                Node {
+                    position_type: PositionType::Absolute,
+                    top: Val::Px(0.0),
+                    left: Val::Px(0.0),
+                    right: Val::Px(0.0),
+                    bottom: Val::Px(0.0),
+                    ..default()
+                },
+                BackgroundColor(Color::NONE),
+                FileUploadPopupBackdrop,
+            ));
+
+            overlay
+                .spawn((
+                    Node {
+                        max_width: Val::Px(520.0),
+                        flex_direction: FlexDirection::Row,
+                        align_items: AlignItems::Center,
+                        column_gap: Val::Px(8.0),
+                        padding: UiRect::axes(Val::Px(12.0), Val::Px(8.0)),
+                        border: UiRect::all(Val::Px(1.0)),
+                        ..default()
+                    },
+                    BorderColor(p.border),
+                    BackgroundColor(p.bar_bg_alt),
+                    BorderRadius::all(Val::Px(8.0)),
+                    TextLayout::new_with_justify(JustifyText::Center),
+                    FileUploadPopupPanel,
+                ))
+                .with_children(|panel| {
+                    panel.spawn((
+                        Text::new(format!("Drop {} file", SUPPORTED_EXTENSIONS_HELP)),
+                        TextFont {
+                            font_size: 12.0,
+                            ..default()
+                        },
+                        TextColor(p.text),
+                        FileUploadText,
+                    ));
+
+                    panel
+                        .spawn((
+                            Button,
+                            Node {
+                                width: Val::Px(18.0),
+                                height: Val::Px(18.0),
+                                margin: UiRect::left(Val::Px(8.0)),
+                                justify_content: JustifyContent::Center,
+                                align_items: AlignItems::Center,
+                                border: UiRect::all(Val::Px(1.0)),
+                                ..default()
+                            },
+                            BorderColor(p.border),
+                            BackgroundColor(p.button_bg),
+                            FileUploadPopupDismissButton,
+                        ))
+                        .with_children(|button| {
+                            button.spawn((
+                                Text::new("×"),
+                                TextFont {
+                                    font_size: 12.0,
+                                    ..default()
+                                },
+                                TextColor(p.text),
+                            ));
+                        });
+                });
         });
 
     commands
@@ -1504,6 +1807,7 @@ pub(crate) fn setup_file_ui(mut commands: Commands, mut font_assets: ResMut<Asse
                                 StructureLoadingProgressFill,
                             ));
                         });
+
                     panel.spawn((
                         Text::new("Fetching structure..."),
                         TextFont {
@@ -1631,11 +1935,65 @@ fn status_message_for_hud(status: &str, kind: FileStatusKind) -> String {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn update_file_ui(
     file_drag_drop: Res<crate::io::FileDragDrop>,
     theme: Res<UiTheme>,
+    time: Res<Time>,
+    mut popup_state: ResMut<FileUploadPopupState>,
+    mut popup_root_query: Query<&mut Node, With<FileUploadPopupRoot>>,
+    popup_dismiss: Query<&Interaction, (Changed<Interaction>, With<FileUploadPopupDismissButton>)>,
+    popup_backdrop: Query<&Interaction, (Changed<Interaction>, With<FileUploadPopupBackdrop>)>,
     mut text_query: Query<(&mut Text, &mut TextColor), With<FileUploadText>>,
 ) {
+    if popup_state.last_status_message != file_drag_drop.status_message
+        || popup_state.last_status_kind != file_drag_drop.status_kind
+    {
+        popup_state.last_status_message = file_drag_drop.status_message.clone();
+        popup_state.last_status_kind = file_drag_drop.status_kind;
+        popup_state.dismissed = false;
+        popup_state.hide_after = if matches!(file_drag_drop.status_kind, FileStatusKind::Success) {
+            Some(time.elapsed_secs_f64() + 3.0)
+        } else {
+            None
+        };
+    }
+
+    if !popup_state.dismissed {
+        for interaction in popup_dismiss.iter() {
+            if *interaction == Interaction::Pressed {
+                popup_state.dismissed = true;
+                popup_state.hide_after = None;
+            }
+        }
+        for interaction in popup_backdrop.iter() {
+            if *interaction == Interaction::Pressed {
+                popup_state.dismissed = true;
+                popup_state.hide_after = None;
+            }
+        }
+    }
+
+    if let Some(hide_after) = popup_state.hide_after {
+        if time.elapsed_secs_f64() >= hide_after {
+            popup_state.dismissed = true;
+            popup_state.hide_after = None;
+        }
+    }
+
+    if file_drag_drop.status_message == format!("Drop {} file", SUPPORTED_EXTENSIONS_HELP) {
+        popup_state.dismissed = true;
+        popup_state.hide_after = None;
+    }
+
+    if let Ok(mut popup_root) = popup_root_query.single_mut() {
+        if popup_state.dismissed {
+            popup_root.display = Display::None;
+        } else {
+            popup_root.display = Display::Flex;
+        }
+    }
+
     if let Ok((mut text, mut color)) = text_query.single_mut() {
         **text = status_message_for_hud(&file_drag_drop.status_message, file_drag_drop.status_kind);
         *color = match file_drag_drop.status_kind {
@@ -1729,6 +2087,7 @@ pub(crate) fn bond_tolerance_controls(
         Query<&mut Node, With<BondToleranceSliderTrack>>,
         Query<&mut Node, With<BondToleranceFill>>,
     )>,
+    windows: Query<&Window>,
     theme: Res<UiTheme>,
     time: Res<Time>,
 ) {
@@ -1739,8 +2098,10 @@ pub(crate) fn bond_tolerance_controls(
     let slider_percent = |v: f32| ((v - MIN_TOLERANCE) / (MAX_TOLERANCE - MIN_TOLERANCE)) * 100.0;
     let value_from_slider =
         |x_norm: f32| MIN_TOLERANCE + x_norm.clamp(0.0, 1.0) * (MAX_TOLERANCE - MIN_TOLERANCE);
-    let using_file_bonds =
-        settings.enabled && crystal.as_deref().is_some_and(|c| c.has_explicit_bonds());
+    let has_file_bonds = crystal.as_deref().is_some_and(|c| c.has_explicit_bonds());
+    let using_file_bonds = settings.enabled && has_file_bonds;
+    let is_wide = windows.single().is_ok_and(|window| window.width() > 768.0);
+    let show_tolerance_controls = settings.enabled && is_wide && !has_file_bonds;
 
     for (interaction, mut color) in &mut interaction_queries.p0() {
         match *interaction {
@@ -1771,7 +2132,6 @@ pub(crate) fn bond_tolerance_controls(
         }
     }
 
-    let show_tolerance_controls = settings.enabled && !using_file_bonds;
     if let Ok(mut slider_track) = node_queries.p0().single_mut() {
         slider_track.display = if show_tolerance_controls {
             Display::Flex
@@ -1797,9 +2157,9 @@ pub(crate) fn bond_tolerance_controls(
         text.0 = if !settings.enabled {
             "Bonds: Off".into()
         } else if using_file_bonds {
-            "Bonds: On (File)".into()
+            "Bonds: File".into()
         } else {
-            "Bonds: On (Infer)".into()
+            "Bonds: Infer".into()
         };
     }
     if let Ok(mut fill) = node_queries.p1().single_mut() {
@@ -1959,16 +2319,19 @@ pub(crate) fn apply_theme_to_hud(
     for mut color in &mut themed.text.p0() {
         *color = TextColor(p.text);
     }
-    if let Ok(mut color) = themed.text.p1().single_mut() {
+    for mut color in &mut themed.text.p1() {
         *color = TextColor(p.text);
     }
-    for mut color in &mut themed.text.p2() {
-        *color = TextColor(p.text_muted);
+    if let Ok(mut color) = themed.text.p2().single_mut() {
+        *color = TextColor(p.text);
     }
     for mut color in &mut themed.text.p3() {
         *color = TextColor(p.text_muted);
     }
     for mut color in &mut themed.text.p4() {
+        *color = TextColor(p.text_muted);
+    }
+    for mut color in &mut themed.text.p5() {
         *color = TextColor(p.text_muted);
     }
 }
@@ -3158,7 +3521,7 @@ pub fn toggle_light_attachment(
         (Changed<Interaction>, With<LightAttachmentButton>),
     >,
     q_trans: Query<&GlobalTransform>,
-    mut texts: Query<&mut Text>,
+    mut texts: Query<&mut Text, With<LightAttachmentLabel>>,
     theme: Res<UiTheme>,
 ) {
     for (interaction, mut background, mut button_state, children) in &mut interactions {
