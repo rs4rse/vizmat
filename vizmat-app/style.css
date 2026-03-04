@@ -154,6 +154,23 @@ canvas {
   user-select: none;
   -webkit-user-select: none;
 }
+#picker-keyboard-input {
+  position: fixed;
+  left: 0;
+  top: 0;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  padding: 0;
+  margin: 0;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: transparent;
+  caret-color: transparent;
+  z-index: 9999;
+  pointer-events: none;
+}
 .loader {
   position: fixed;
   inset: 0;

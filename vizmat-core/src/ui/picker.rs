@@ -3,6 +3,10 @@ use bevy::input::mouse::{MouseScrollUnit, MouseWheel};
 use bevy::input::ButtonState;
 use bevy::picking::hover::HoverMap;
 use bevy::prelude::*;
+#[cfg(target_arch = "wasm32")]
+use gloo::utils::window;
+#[cfg(target_arch = "wasm32")]
+use web_sys::Event;
 
 use super::{
     themed_button_bg, CatalogLoadChannel, HudButton, HudButtonLabel, ThemeMode, UiTheme,
@@ -20,6 +24,9 @@ pub(crate) struct StructurePickerQueryText;
 
 #[derive(Component)]
 pub(crate) struct StructurePickerQueryIcon;
+
+#[derive(Component)]
+pub(crate) struct StructurePickerQueryCaret;
 
 #[derive(Component)]
 pub(crate) struct StructurePickerResultsRoot;
@@ -48,9 +55,53 @@ pub(crate) struct StructurePickerState {
     pub(crate) visible: bool,
 }
 
+#[derive(Resource)]
+pub(crate) struct StructurePickerCaretState {
+    timer: Timer,
+    pub(crate) visible: bool,
+}
+
+impl Default for StructurePickerCaretState {
+    fn default() -> Self {
+        Self {
+            timer: Timer::from_seconds(0.55, TimerMode::Repeating),
+            visible: true,
+        }
+    }
+}
+
 const SCROLLBAR_WIDTH: f32 = 8.0;
 const SCROLLBAR_TRACK_GAP: f32 = 4.0;
 const MIN_SCROLLBAR_THUMB_PX: f32 = 18.0;
+
+pub(crate) fn set_structure_picker_keyboard_active(visible: bool) {
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let _ = visible;
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    let Some(window) = window() else {
+        return;
+    };
+
+    #[cfg(target_arch = "wasm32")]
+    let event_name = if visible {
+        "vizmat-structure-picker-open"
+    } else {
+        "vizmat-structure-picker-close"
+    };
+
+    #[cfg(target_arch = "wasm32")]
+    match Event::new(event_name) {
+        Ok(event) => {
+            let _ = window.dispatch_event(&event);
+        }
+        Err(err) => {
+            warn!("Failed to notify picker keyboard visibility for '{event_name}': {err:?}");
+        }
+    }
+}
 
 pub(crate) fn setup_structure_picker_panel(
     commands: &mut Commands,
@@ -118,6 +169,16 @@ pub(crate) fn setup_structure_picker_panel(
                         },
                         TextColor(palette.text_muted),
                         StructurePickerQueryText,
+                    ));
+                    row.spawn((
+                        Text::new("|"),
+                        TextFont {
+                            font_size: 11.0,
+                            ..default()
+                        },
+                        TextColor(palette.text_muted),
+                        Visibility::Hidden,
+                        StructurePickerQueryCaret,
                     ));
                     row.spawn((
                         Text::new("\u{f002}"),
@@ -197,13 +258,23 @@ pub(crate) fn setup_structure_picker_panel(
         });
 }
 
-fn filtered_structure_entries(state: &StructurePickerState) -> Vec<String> {
+pub(crate) fn filtered_structure_entries(state: &StructurePickerState) -> Vec<String> {
     state
         .entries
         .iter()
         .filter(|entry| structure_matches_query(entry, &state.query))
         .cloned()
         .collect()
+}
+
+pub(crate) fn apply_structure_picker_query_text(
+    picker: &mut StructurePickerState,
+    caret_state: &mut StructurePickerCaretState,
+    query: String,
+) {
+    picker.query = query;
+    caret_state.visible = true;
+    caret_state.timer.reset();
 }
 
 #[allow(clippy::type_complexity)]
@@ -214,13 +285,17 @@ pub(crate) fn structure_picker_toggle_button(
     >,
     mut picker: ResMut<StructurePickerState>,
     theme: Res<UiTheme>,
+    mut caret_state: ResMut<StructurePickerCaretState>,
 ) {
     for (interaction, mut color) in &mut interaction_query {
         match *interaction {
             Interaction::Pressed => {
                 picker.visible = !picker.visible;
                 if picker.visible {
-                    picker.query.clear();
+                    apply_structure_picker_query_text(&mut picker, &mut caret_state, String::new());
+                    set_structure_picker_keyboard_active(true);
+                } else {
+                    set_structure_picker_keyboard_active(false);
                 }
                 *color = BackgroundColor(themed_button_bg(theme.mode, Interaction::Pressed));
             }
@@ -239,6 +314,7 @@ pub(crate) fn structure_picker_keyboard_search(
     mut picker: ResMut<StructurePickerState>,
     mut file_drag_drop: ResMut<crate::io::FileDragDrop>,
     catalog_channel: Option<Res<CatalogLoadChannel>>,
+    mut caret_state: ResMut<StructurePickerCaretState>,
 ) {
     if !picker.visible {
         return;
@@ -252,9 +328,12 @@ pub(crate) fn structure_picker_keyboard_search(
         match &event.logical_key {
             Key::Escape => {
                 picker.visible = false;
+                set_structure_picker_keyboard_active(false);
             }
             Key::Backspace => {
-                picker.query.pop();
+                let _ = picker.query.pop();
+                let query = picker.query.clone();
+                apply_structure_picker_query_text(&mut picker, &mut caret_state, query);
             }
             Key::Enter => {
                 if let Some(first) = filtered_structure_entries(&picker).first().cloned() {
@@ -264,13 +343,16 @@ pub(crate) fn structure_picker_keyboard_search(
                         catalog_channel.as_deref(),
                     );
                     picker.visible = false;
+                    set_structure_picker_keyboard_active(false);
                 }
             }
             Key::Character(_) => {
                 if let Some(text) = &event.text {
                     // Keep search input simple and predictable for all layouts.
                     if text.chars().all(|ch| !ch.is_control()) {
-                        picker.query.push_str(text);
+                        let mut query = picker.query.clone();
+                        query.push_str(text);
+                        apply_structure_picker_query_text(&mut picker, &mut caret_state, query);
                     }
                 }
             }
@@ -289,6 +371,15 @@ pub(crate) fn refresh_structure_picker_panel(
         (
             With<StructurePickerQueryText>,
             Without<StructurePickerQueryIcon>,
+            Without<StructurePickerQueryCaret>,
+        ),
+    >,
+    mut query_caret_color: Query<
+        &mut TextColor,
+        (
+            With<StructurePickerQueryCaret>,
+            Without<StructurePickerQueryText>,
+            Without<StructurePickerQueryIcon>,
         ),
     >,
     mut query_icon_color: Query<
@@ -296,6 +387,7 @@ pub(crate) fn refresh_structure_picker_panel(
         (
             With<StructurePickerQueryIcon>,
             Without<StructurePickerQueryText>,
+            Without<StructurePickerQueryCaret>,
         ),
     >,
     results_root_query: Query<
@@ -330,6 +422,13 @@ pub(crate) fn refresh_structure_picker_panel(
             text.0 = picker.query.clone();
             text_color.0 = palette.text;
         }
+    }
+    if let Ok(mut caret_color) = query_caret_color.single_mut() {
+        caret_color.0 = if picker.query.is_empty() {
+            palette.text_muted
+        } else {
+            palette.text
+        };
     }
     if let Ok(mut icon_color) = query_icon_color.single_mut() {
         icon_color.0 = palette.text_muted;
@@ -381,6 +480,32 @@ pub(crate) fn refresh_structure_picker_panel(
                 });
         });
     }
+}
+
+pub(crate) fn blink_structure_picker_query_caret(
+    time: Res<Time>,
+    picker: Res<StructurePickerState>,
+    mut caret_state: ResMut<StructurePickerCaretState>,
+    mut caret_query: Query<&mut Visibility, With<StructurePickerQueryCaret>>,
+) {
+    let Ok(mut caret_visibility) = caret_query.single_mut() else {
+        return;
+    };
+
+    if !picker.visible {
+        *caret_visibility = Visibility::Hidden;
+        return;
+    }
+
+    caret_state.timer.tick(time.delta());
+    if caret_state.timer.just_finished() {
+        caret_state.visible = !caret_state.visible;
+    }
+    *caret_visibility = if caret_state.visible {
+        Visibility::Inherited
+    } else {
+        Visibility::Hidden
+    };
 }
 
 pub(crate) fn update_structure_picker_scroll_indicator(
@@ -545,6 +670,7 @@ pub(crate) fn structure_picker_result_buttons(
                     catalog_channel.as_deref(),
                 );
                 picker.visible = false;
+                set_structure_picker_keyboard_active(false);
             }
             Interaction::Hovered => {
                 *background = BackgroundColor(themed_button_bg(theme.mode, Interaction::Hovered));
@@ -630,9 +756,15 @@ mod tests {
             .iter_entities()
             .filter(|entity| entity.contains::<StructurePickerQueryIcon>())
             .count();
+        let query_caret_count = app
+            .world()
+            .iter_entities()
+            .filter(|entity| entity.contains::<StructurePickerQueryCaret>())
+            .count();
 
         assert_eq!(query_text_count, 1);
         assert_eq!(query_icon_count, 1);
+        assert_eq!(query_caret_count, 1);
     }
 
     #[test]

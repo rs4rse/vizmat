@@ -32,19 +32,22 @@ use crate::structure::{
     Crystal, UpdateStructure,
 };
 use crate::ui::{
-    apply_bond_tolerance_debounce, apply_theme_to_atom_hover_panel, apply_theme_to_hud,
-    apply_theme_to_startup_screen, auto_reset_view_on_crystal_change, bond_tolerance_controls,
-    camera_controls, cleanup_startup_screen, color_mode_button, handle_catalog_load_results,
-    handle_load_default_button, handle_open_file_button, hide_non_startup_controls,
-    refresh_structure_picker_panel, reset_camera_button_interaction, setup_cameras, setup_file_ui,
-    setup_light, setup_startup_screen, show_non_startup_controls, structure_picker_keyboard_search,
+    apply_bond_tolerance_debounce, apply_structure_picker_query_text,
+    apply_theme_to_atom_hover_panel, apply_theme_to_hud, apply_theme_to_startup_screen,
+    auto_reset_view_on_crystal_change, blink_structure_picker_query_caret, bond_tolerance_controls,
+    camera_controls, cleanup_startup_screen, color_mode_button, filtered_structure_entries,
+    handle_catalog_load_results, handle_load_default_button, handle_open_file_button,
+    hide_non_startup_controls, refresh_structure_picker_panel, reset_camera_button_interaction,
+    set_structure_picker_keyboard_active, setup_cameras, setup_file_ui, setup_light,
+    setup_startup_screen, show_non_startup_controls, structure_picker_keyboard_search,
     structure_picker_result_buttons, structure_picker_scroll, structure_picker_toggle_button,
     sync_atom_selection_highlight, sync_color_mode_label, sync_gizmo_axis_rotation,
     toggle_light_attachment, toggle_theme_button, transition_to_running_on_structure_loaded,
     update_atom_hover_cache, update_atom_hover_label, update_bond_order_legend,
     update_color_mode_availability, update_file_ui, update_gizmo_viewport, update_scene,
     update_selected_atom_from_click, update_structure_loading_overlay,
-    update_structure_picker_scroll_indicator, AppUiState, CatalogLoadChannel, TouchGestureState,
+    update_structure_picker_scroll_indicator, AppUiState, CatalogLoadChannel,
+    StructurePickerCaretState, StructurePickerState, TouchGestureState,
 };
 use crate::ui::{setup_buttons, spawn_axis};
 
@@ -90,6 +93,10 @@ pub enum WebEvent {
         dy: f32,
         scale_delta: f32,
     },
+    StructurePickerQuery {
+        query: String,
+        submit: bool,
+    },
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -134,6 +141,13 @@ struct TouchGesturePayload {
     scale_delta: f32,
 }
 
+#[allow(dead_code)]
+#[derive(serde::Deserialize)]
+struct StructurePickerQueryPayload {
+    query: String,
+    action: String,
+}
+
 pub struct WebPlugin {
     #[cfg_attr(not(target_family = "wasm"), allow(dead_code))]
     pub dom_drop_element_id: String,
@@ -175,6 +189,7 @@ impl Plugin for WebPlugin {
             set_sender(sender);
             register_drop(&self.dom_drop_element_id).unwrap();
             register_touch_gesture_listener().unwrap();
+            register_structure_picker_query_listener().unwrap();
         }
     }
 }
@@ -379,6 +394,44 @@ fn register_touch_gesture_listener() -> Option<()> {
     Some(())
 }
 
+#[cfg(target_arch = "wasm32")]
+fn register_structure_picker_query_listener() -> Option<()> {
+    let document = gloo::utils::document();
+    let window = document.default_view()?;
+
+    EventListener::new_with_options(
+        &window,
+        "vizmat-picker-query",
+        EventListenerOptions::enable_prevent_default(),
+        move |event| {
+            let event: CustomEvent = match event.clone().dyn_into() {
+                Ok(event) => event,
+                Err(err) => {
+                    warn!("Ignoring invalid structure-picker-query event: {err:?}");
+                    return;
+                }
+            };
+
+            let payload: StructurePickerQueryPayload = match event.detail().into_serde() {
+                Ok(payload) => payload,
+                Err(err) => {
+                    warn!("Ignoring structure-picker-query payload parse failure: {err}");
+                    return;
+                }
+            };
+
+            let submit = payload.action.eq_ignore_ascii_case("submit");
+            send_event(WebEvent::StructurePickerQuery {
+                query: payload.query,
+                submit,
+            });
+        },
+    )
+    .forget();
+
+    Some(())
+}
+
 /// Shared function for Bevy app setup
 pub fn run_app() {
     App::new()
@@ -458,6 +511,7 @@ pub fn run_app() {
         )
         .add_systems(Update, structure_picker_toggle_button)
         .add_systems(Update, structure_picker_keyboard_search)
+        .add_systems(Update, blink_structure_picker_query_caret)
         .add_systems(
             Update,
             refresh_structure_picker_panel.after(structure_picker_keyboard_search),
@@ -532,12 +586,16 @@ pub fn run_app() {
         .run();
 }
 
+#[allow(clippy::too_many_arguments)]
 fn web_event_observer(
     trigger: Trigger<WebEvent>,
     mut file_drag_drop: ResMut<FileDragDrop>,
     mut next_ui_state: ResMut<NextState<AppUiState>>,
     mut commands: Commands,
     mut touch_gesture_state: ResMut<TouchGestureState>,
+    mut picker: ResMut<StructurePickerState>,
+    mut picker_caret_state: ResMut<StructurePickerCaretState>,
+    catalog_channel: Option<Res<CatalogLoadChannel>>,
 ) {
     match trigger.event() {
         WebEvent::Drop {
@@ -594,6 +652,28 @@ fn web_event_observer(
                 touch_gesture_state.zoom += *scale_delta;
             }
         },
+        WebEvent::StructurePickerQuery { query, submit } => {
+            apply_structure_picker_query_text(&mut picker, &mut picker_caret_state, query.clone());
+
+            if !picker.visible {
+                picker.visible = true;
+                set_structure_picker_keyboard_active(true);
+            }
+
+            if !submit {
+                return;
+            }
+
+            if let Some(first) = filtered_structure_entries(&picker).first().cloned() {
+                crate::ui::load_structure_from_catalog_path(
+                    &first,
+                    &mut file_drag_drop,
+                    catalog_channel.as_deref(),
+                );
+                picker.visible = false;
+                set_structure_picker_keyboard_active(false);
+            }
+        }
     }
 }
 

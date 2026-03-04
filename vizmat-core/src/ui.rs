@@ -34,10 +34,13 @@ use crate::structure::{
 
 mod picker;
 pub(crate) use picker::{
-    parse_embedded_structure_entries, refresh_structure_picker_panel, setup_structure_picker_panel,
+    apply_structure_picker_query_text, blink_structure_picker_query_caret,
+    filtered_structure_entries, parse_embedded_structure_entries, refresh_structure_picker_panel,
+    set_structure_picker_keyboard_active, setup_structure_picker_panel,
     structure_picker_keyboard_search, structure_picker_result_buttons, structure_picker_scroll,
     structure_picker_toggle_button, update_structure_picker_scroll_indicator,
-    StructurePickerResultsScroll, StructurePickerState, StructurePickerToggleButton,
+    StructurePickerCaretState, StructurePickerResultsScroll, StructurePickerState,
+    StructurePickerToggleButton,
 };
 
 const LAYER_GIZMO: RenderLayers = RenderLayers::layer(1);
@@ -1142,6 +1145,7 @@ pub(crate) fn setup_file_ui(mut commands: Commands, mut font_assets: ResMut<Asse
         query: String::new(),
         visible: false,
     });
+    commands.insert_resource(StructurePickerCaretState::default());
     let p = theme_palette(theme.mode);
     let is_mobile = {
         #[cfg(target_arch = "wasm32")]
@@ -2107,7 +2111,7 @@ pub fn clear_old_atoms(mut commands: Commands, atom_query: Query<Entity, With<At
     }
 }
 
-fn load_structure_from_catalog_path(
+pub(crate) fn load_structure_from_catalog_path(
     path: &str,
     file_drag_drop: &mut crate::io::FileDragDrop,
     catalog_channel: Option<&CatalogLoadChannel>,
