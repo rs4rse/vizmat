@@ -71,7 +71,7 @@ pub struct BondEntity;
 #[derive(Component, Debug, Clone, Copy)]
 pub struct BondOrder(pub u8);
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Bond {
     pub a: usize,
     pub b: usize,
@@ -83,6 +83,35 @@ pub enum BondSourceMode {
     Disabled,
     File,
     Inferred,
+}
+
+#[derive(Resource, Clone)]
+pub struct BondCache {
+    pub is_dirty: bool,
+    pub bonds: Vec<Bond>,
+    pub source: BondSourceMode,
+    pub valid: bool,
+    pub atom_count: usize,
+    pub file_bond_count: usize,
+    pub has_file_bonds: bool,
+    pub infer_tolerance_scale: f32,
+    pub settings_enabled: bool,
+}
+
+impl Default for BondCache {
+    fn default() -> Self {
+        Self {
+            is_dirty: true,
+            bonds: Vec::new(),
+            source: BondSourceMode::Disabled,
+            valid: false,
+            atom_count: 0,
+            file_bond_count: 0,
+            has_file_bonds: false,
+            infer_tolerance_scale: 0.0,
+            settings_enabled: true,
+        }
+    }
 }
 
 // Event to update the structure with new atom positions
@@ -100,6 +129,20 @@ pub fn update_crystal_system(
         for event in events.read() {
             crystal.atoms.clone_from(&event.atoms);
         }
+    }
+}
+
+pub fn mark_bond_cache_dirty(
+    crystal: Option<Res<Crystal>>,
+    bond_settings: Res<BondInferenceSettings>,
+    mut bond_cache: ResMut<BondCache>,
+) {
+    let Some(crystal) = crystal else {
+        return;
+    };
+
+    if crystal.is_changed() || bond_settings.is_changed() {
+        bond_cache.is_dirty = true;
     }
 }
 
@@ -182,4 +225,100 @@ pub fn resolve_bonds(
         infer_bonds_grid(crystal, settings.tolerance_scale),
         BondSourceMode::Inferred,
     )
+}
+
+impl BondCache {
+    fn can_reuse(&self, crystal: &Crystal, settings: &BondInferenceSettings) -> bool {
+        if !self.valid || self.is_dirty {
+            return false;
+        }
+
+        if self.settings_enabled != settings.enabled {
+            return false;
+        }
+
+        if self.atom_count != crystal.atoms.len() {
+            return false;
+        }
+
+        if !settings.enabled {
+            return self.source == BondSourceMode::Disabled;
+        }
+
+        let has_file_bonds = crystal.bonds.as_ref().is_some_and(|b| !b.is_empty());
+        if has_file_bonds != self.has_file_bonds {
+            return false;
+        }
+
+        if has_file_bonds {
+            return self.source == BondSourceMode::File
+                && self.file_bond_count == crystal.bonds.as_ref().map_or(0, Vec::len);
+        }
+
+        self.source == BondSourceMode::Inferred
+            && (self.infer_tolerance_scale - settings.tolerance_scale).abs() <= f32::EPSILON
+    }
+
+    pub fn resolve_bonds_cached<'a>(
+        &'a mut self,
+        crystal: &Crystal,
+        settings: &BondInferenceSettings,
+    ) -> (&'a [Bond], BondSourceMode) {
+        if self.can_reuse(crystal, settings) {
+            return (&self.bonds, self.source);
+        }
+
+        let (next_bonds, source) = resolve_bonds(crystal, settings);
+        self.bonds = next_bonds;
+        self.source = source;
+        self.atom_count = crystal.atoms.len();
+        self.file_bond_count = crystal.bonds.as_ref().map_or(0, Vec::len);
+        self.has_file_bonds = crystal.has_explicit_bonds();
+        self.infer_tolerance_scale = settings.tolerance_scale;
+        self.settings_enabled = settings.enabled;
+        self.is_dirty = false;
+        self.valid = true;
+
+        (&self.bonds, self.source)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::PathBuf;
+
+    use crate::formats::parse_structure_by_extension;
+    use crate::structure::{BondCache, BondInferenceSettings, BondSourceMode, Crystal};
+
+    fn asset_file(path: &str) -> PathBuf {
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../vizmat-app/assets/structures")
+            .join(path)
+    }
+
+    fn load_structure(path: &str) -> Crystal {
+        let full_path = asset_file(path);
+        let ext = full_path
+            .extension()
+            .and_then(|e| e.to_str())
+            .unwrap_or_default();
+        let contents =
+            std::fs::read_to_string(&full_path).expect("expected structure asset to be readable");
+        parse_structure_by_extension(ext, &contents).expect("expected structure parse success")
+    }
+
+    #[test]
+    fn inferred_bonds_cached_6vxx() {
+        let crystal = load_structure("proteins/6VXX.pdb");
+        let settings = BondInferenceSettings::default();
+        let mut cache = BondCache::default();
+
+        let (first_bonds, first_source) = cache.resolve_bonds_cached(&crystal, &settings);
+        assert_eq!(first_source, BondSourceMode::Inferred);
+        let first_bonds = first_bonds.to_vec();
+
+        let (second_bonds, second_source) = cache.resolve_bonds_cached(&crystal, &settings);
+        assert_eq!(second_source, BondSourceMode::Inferred);
+        assert_eq!(first_bonds, second_bonds);
+    }
 }

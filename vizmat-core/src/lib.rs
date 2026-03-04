@@ -18,8 +18,8 @@ pub(crate) mod ui;
 
 pub(crate) mod client;
 pub(crate) mod constants;
-pub(crate) mod formats;
-pub(crate) mod structure;
+pub mod formats;
+pub mod structure;
 
 use crate::client::{poll_websocket_stream, setup_websocket_stream};
 use crate::formats::{
@@ -27,7 +27,8 @@ use crate::formats::{
 };
 use crate::io::{handle_file_drag_drop, load_dropped_file, update_crystal_from_file, FileDragDrop};
 use crate::structure::{
-    update_crystal_system, AtomColorMode, BondInferenceSettings, Crystal, UpdateStructure,
+    mark_bond_cache_dirty, update_crystal_system, AtomColorMode, BondCache, BondInferenceSettings,
+    Crystal, UpdateStructure,
 };
 use crate::ui::{
     apply_bond_tolerance_debounce, apply_theme_to_atom_hover_panel, apply_theme_to_hud,
@@ -310,6 +311,7 @@ pub fn run_app() {
         .init_resource::<CatalogLoadChannel>()
         .init_resource::<AtomColorMode>()
         .init_resource::<BondInferenceSettings>()
+        .init_resource::<BondCache>()
         .init_state::<AppUiState>()
         .add_event::<UpdateStructure>()
         .add_event::<bevy::window::FileDragAndDrop>()
@@ -339,6 +341,12 @@ pub fn run_app() {
             ),
         )
         .add_systems(Update, update_file_ui)
+        .add_systems(
+            Update,
+            mark_bond_cache_dirty
+                .after(apply_bond_tolerance_debounce)
+                .run_if(in_state(AppUiState::Running)),
+        )
         .add_systems(Update, update_structure_loading_overlay)
         .add_systems(Update, handle_catalog_load_results)
         .add_systems(
@@ -370,7 +378,9 @@ pub fn run_app() {
         )
         .add_systems(
             Update,
-            update_color_mode_availability.run_if(in_state(AppUiState::Running)),
+            update_color_mode_availability
+                .after(mark_bond_cache_dirty)
+                .run_if(in_state(AppUiState::Running)),
         )
         .add_systems(
             Update,
@@ -418,7 +428,7 @@ pub fn run_app() {
                 camera_controls,
                 sync_gizmo_axis_rotation,
                 update_gizmo_viewport,
-                update_scene,
+                update_scene.after(mark_bond_cache_dirty),
                 sync_atom_selection_highlight.after(update_scene),
                 update_bond_order_legend.after(update_scene),
                 update_atom_hover_label.after(update_scene),

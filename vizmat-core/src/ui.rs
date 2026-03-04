@@ -28,7 +28,7 @@ use crate::formats::SUPPORTED_EXTENSIONS;
 use crate::formats::SUPPORTED_EXTENSIONS_HELP;
 use crate::io::FileStatusKind;
 use crate::structure::{
-    resolve_bonds, AtomColorMode, AtomEntity, AtomIndex, Bond, BondEntity, BondInferenceSettings,
+    AtomColorMode, AtomEntity, AtomIndex, Bond, BondCache, BondEntity, BondInferenceSettings,
     BondOrder, Crystal,
 };
 
@@ -567,6 +567,7 @@ fn count_unique_non_empty(values: impl Iterator<Item = Option<String>>) -> usize
 fn compute_available_color_modes(
     crystal: Option<&Crystal>,
     bond_settings: &BondInferenceSettings,
+    bond_cache: &mut BondCache,
 ) -> Vec<AtomColorMode> {
     let mut modes = vec![AtomColorMode::Element];
     let Some(crystal) = crystal else {
@@ -583,22 +584,22 @@ fn compute_available_color_modes(
         modes.push(AtomColorMode::Residue);
     }
 
-    let bonds = bonds_for_color(crystal, bond_settings);
+    let bonds = bonds_for_color(crystal, bond_settings, bond_cache);
     if !bonds.is_empty() {
-        let ring_atoms = compute_ring_atoms(crystal.atoms.len(), &bonds);
+        let ring_atoms = compute_ring_atoms(crystal.atoms.len(), bonds);
         let ring_count = ring_atoms.iter().filter(|&&v| v).count();
         if ring_count > 0 && ring_count < crystal.atoms.len() {
             modes.push(AtomColorMode::Ring);
         }
 
-        let bond_env_atoms = compute_bond_env_atoms(crystal.atoms.len(), &bonds);
+        let bond_env_atoms = compute_bond_env_atoms(crystal.atoms.len(), bonds);
         let env_count = bond_env_atoms.iter().filter(|&&v| v).count();
         if env_count > 0 && env_count < crystal.atoms.len() {
             modes.push(AtomColorMode::BondEnv);
         }
 
         let functional_groups =
-            compute_functional_groups(crystal, &bonds, &ring_atoms, &bond_env_atoms);
+            compute_functional_groups(crystal, bonds, &ring_atoms, &bond_env_atoms);
         let unique_groups = functional_groups.iter().copied().collect::<HashSet<_>>();
         if unique_groups.len() > 1 {
             modes.push(AtomColorMode::Functional);
@@ -608,9 +609,15 @@ fn compute_available_color_modes(
     modes
 }
 
-fn bonds_for_color(crystal: &Crystal, bond_settings: &BondInferenceSettings) -> Vec<Bond> {
+fn bonds_for_color<'a>(
+    crystal: &'a Crystal,
+    bond_settings: &BondInferenceSettings,
+    bond_cache: &'a mut BondCache,
+) -> &'a [Bond] {
+    static EMPTY_BONDS: [Bond; 0] = [];
+
     if bond_settings.enabled {
-        let (bonds, _) = resolve_bonds(crystal, bond_settings);
+        let (bonds, _) = bond_cache.resolve_bonds_cached(crystal, bond_settings);
         return bonds;
     }
 
@@ -618,13 +625,14 @@ fn bonds_for_color(crystal: &Crystal, bond_settings: &BondInferenceSettings) -> 
         .bonds
         .as_ref()
         .filter(|b| !b.is_empty())
-        .cloned()
-        .unwrap_or_default()
+        .map(|b| b.as_slice())
+        .unwrap_or(&EMPTY_BONDS)
 }
 
 pub(crate) fn update_atom_hover_cache(
     crystal: Option<Res<Crystal>>,
     bond_settings: Res<BondInferenceSettings>,
+    mut bond_cache: ResMut<BondCache>,
     mut cache: ResMut<AtomHoverCache>,
 ) {
     let Some(crystal) = crystal else {
@@ -637,9 +645,9 @@ pub(crate) fn update_atom_hover_cache(
         return;
     }
 
-    let bonds = bonds_for_color(&crystal, &bond_settings);
-    cache.degree = compute_atom_degree(crystal.atoms.len(), &bonds);
-    cache.ring_atoms = compute_ring_atoms(crystal.atoms.len(), &bonds);
+    let bonds = bonds_for_color(&crystal, &bond_settings, &mut bond_cache);
+    cache.degree = compute_atom_degree(crystal.atoms.len(), bonds);
+    cache.ring_atoms = compute_ring_atoms(crystal.atoms.len(), bonds);
 }
 
 fn pick_atom_under_cursor(
@@ -1948,10 +1956,12 @@ pub(crate) fn color_mode_button(
 pub(crate) fn update_color_mode_availability(
     crystal: Option<Res<Crystal>>,
     bond_settings: Res<BondInferenceSettings>,
+    mut bond_cache: ResMut<BondCache>,
     mut mode: ResMut<AtomColorMode>,
     mut availability: ResMut<ColorModeAvailability>,
 ) {
-    let next_modes = compute_available_color_modes(crystal.as_deref(), &bond_settings);
+    let next_modes =
+        compute_available_color_modes(crystal.as_deref(), &bond_settings, &mut bond_cache);
     if availability.modes != next_modes {
         availability.modes = next_modes;
     }
@@ -2626,6 +2636,7 @@ pub(crate) fn update_scene(
     crystal: Option<Res<Crystal>>,
     bond_settings: Res<BondInferenceSettings>,
     color_mode: Res<AtomColorMode>,
+    mut bond_cache: ResMut<BondCache>,
     atom_query: Query<Entity, With<AtomEntity>>,
     bond_query: Query<Entity, With<BondEntity>>,
     molecule_root: Query<Entity, With<MoleculeRoot>>,
@@ -2669,6 +2680,7 @@ pub(crate) fn update_scene(
                     &crystal,
                     &bond_settings,
                     *color_mode,
+                    &mut bond_cache,
                     root_entity,
                 );
             }
@@ -2678,6 +2690,7 @@ pub(crate) fn update_scene(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 // Helper function to spawn atoms
 fn spawn_atoms(
     commands: &mut Commands,
@@ -2686,6 +2699,7 @@ fn spawn_atoms(
     crystal: &Crystal,
     bond_settings: &BondInferenceSettings,
     color_mode: AtomColorMode,
+    bond_cache: &mut BondCache,
     root_entity: Entity,
 ) {
     // Create a sphere mesh for atoms
@@ -2694,16 +2708,25 @@ fn spawn_atoms(
 
     // Create materials for different elements
     let mut element_materials: HashMap<String, Handle<StandardMaterial>> = HashMap::new();
-    let (render_bonds, _source) = resolve_bonds(crystal, bond_settings);
-    let color_bonds = bonds_for_color(crystal, bond_settings);
-    let ring_atoms = compute_ring_atoms(crystal.atoms.len(), &color_bonds);
-    let bond_env_atoms = compute_bond_env_atoms(crystal.atoms.len(), &color_bonds);
+    let (render_bonds, _source) = bond_cache.resolve_bonds_cached(crystal, bond_settings);
+    let color_bonds = if bond_settings.enabled {
+        render_bonds
+    } else {
+        crystal
+            .bonds
+            .as_ref()
+            .filter(|b| !b.is_empty())
+            .map(|b| b.as_slice())
+            .unwrap_or(&[])
+    };
+    let ring_atoms = compute_ring_atoms(crystal.atoms.len(), color_bonds);
+    let bond_env_atoms = compute_bond_env_atoms(crystal.atoms.len(), color_bonds);
     let functional_groups =
-        compute_functional_groups(crystal, &color_bonds, &ring_atoms, &bond_env_atoms);
+        compute_functional_groups(crystal, color_bonds, &ring_atoms, &bond_env_atoms);
     let mut bond_materials: HashMap<u8, Handle<StandardMaterial>> = HashMap::new();
 
     commands.entity(root_entity).with_children(|parent| {
-        for bond in &render_bonds {
+        for bond in render_bonds {
             let a = &crystal.atoms[bond.a];
             let b = &crystal.atoms[bond.b];
             let pa = Vec3::new(a.x, a.y, a.z);

@@ -62,6 +62,14 @@ cargo run --release
 
 (Bevy uses Metal; no Vulkan needed.)
 
+### Performance
+
+```bash
+just bench
+# or
+cargo bench -p vizmat-core --bench bond_cache
+```
+
 ## wasm
 
 It require rustc target `wasm32-unknown-unknown` installed.

@@ -2,9 +2,9 @@ use anyhow::Result;
 
 use crate::structure::Crystal;
 
-mod pdb;
-mod sdf;
-mod xyz;
+pub mod pdb;
+pub mod sdf;
+pub mod xyz;
 
 pub(crate) const SUPPORTED_EXTENSIONS: &[&str] = &["xyz", "pdb", "sdf"];
 pub(crate) const SUPPORTED_EXTENSIONS_HELP: &str = ".xyz, .pdb, or .sdf";
@@ -14,7 +14,7 @@ pub(crate) fn is_supported_extension(ext: &str) -> bool {
     SUPPORTED_EXTENSIONS.contains(&normalized.as_str())
 }
 
-pub(crate) fn parse_structure_by_extension(ext: &str, contents: &str) -> Result<Crystal> {
+pub fn parse_structure_by_extension(ext: &str, contents: &str) -> Result<Crystal> {
     let normalized = ext.trim_start_matches('.').to_ascii_lowercase();
     match normalized.as_str() {
         "xyz" => xyz::parse_xyz_content(contents),
