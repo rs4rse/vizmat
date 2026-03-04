@@ -47,6 +47,7 @@ jobs:
         run: |
           cp ../../wasm/* .
           cp ../../vizmat-app/index.html .
+          cp ../../vizmat-app/mobile-gesture.js .
           cp ../../vizmat-app/style.css .
           npm install
           npm run build
