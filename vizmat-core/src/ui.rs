@@ -39,8 +39,8 @@ pub(crate) use picker::{
     set_structure_picker_keyboard_active, setup_structure_picker_panel,
     structure_picker_keyboard_search, structure_picker_result_buttons, structure_picker_scroll,
     structure_picker_toggle_button, update_structure_picker_scroll_indicator,
-    StructurePickerCaretState, StructurePickerResultsScroll, StructurePickerState,
-    StructurePickerToggleButton,
+    StructurePickerCaretState, StructurePickerResultsScroll, StructurePickerSelectionState,
+    StructurePickerState, StructurePickerToggleButton,
 };
 
 const LAYER_GIZMO: RenderLayers = RenderLayers::layer(1);
@@ -1146,6 +1146,7 @@ pub(crate) fn setup_file_ui(mut commands: Commands, mut font_assets: ResMut<Asse
         visible: false,
     });
     commands.insert_resource(StructurePickerCaretState::default());
+    commands.insert_resource(StructurePickerSelectionState::default());
     let p = theme_palette(theme.mode);
     let is_mobile = {
         #[cfg(target_arch = "wasm32")]

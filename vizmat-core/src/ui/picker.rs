@@ -58,6 +58,31 @@ pub(crate) struct StructurePickerState {
     pub(crate) visible: bool,
 }
 
+#[derive(Resource, Default)]
+pub(crate) struct StructurePickerSelectionState {
+    pending: Option<(Entity, String)>,
+    suppress_click_frames: u8,
+}
+
+impl StructurePickerSelectionState {
+    fn consume_suppression(&mut self) -> bool {
+        if self.suppress_click_frames > 0 {
+            self.suppress_click_frames = self.suppress_click_frames.saturating_sub(1);
+            true
+        } else {
+            false
+        }
+    }
+
+    fn suppress_for_touch_drag(&mut self) {
+        self.suppress_click_frames = self.suppress_click_frames.max(2);
+    }
+
+    fn is_suppressed(&self) -> bool {
+        self.suppress_click_frames > 0
+    }
+}
+
 #[derive(Resource)]
 pub(crate) struct StructurePickerCaretState {
     timer: Timer,
@@ -640,22 +665,30 @@ pub(crate) fn update_structure_picker_scroll_indicator(
     *visibility = Visibility::Inherited;
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn structure_picker_scroll(
     mut mouse_wheel_events: EventReader<MouseWheel>,
     hover_map: Res<HoverMap>,
     scroll_nodes: Query<Entity, With<StructurePickerResultsScroll>>,
+    panel_nodes: Query<Entity, With<StructurePickerPanel>>,
     mut scroll_positions: Query<&mut ScrollPosition>,
     parents: Query<&ChildOf>,
     touch_gesture_state: Res<TouchGestureState>,
     keyboard_input: Res<ButtonInput<KeyCode>>,
+    mut picker_selection_state: ResMut<StructurePickerSelectionState>,
 ) {
-    let picker_hovered = scroll_nodes.iter().any(|scroll_root| {
-        hover_map.iter().any(|(_, pointer_map)| {
-            pointer_map
-                .iter()
-                .any(|(hovered, _)| is_descendant_or_self(*hovered, scroll_root, &parents))
-        })
-    });
+    let _ = picker_selection_state.consume_suppression();
+
+    let picker_hovered = panel_nodes
+        .iter()
+        .chain(scroll_nodes.iter())
+        .any(|picker_root| {
+            hover_map.iter().any(|(_, pointer_map)| {
+                pointer_map
+                    .iter()
+                    .any(|(hovered, _)| is_descendant_or_self(*hovered, picker_root, &parents))
+            })
+        });
 
     for mouse_wheel in mouse_wheel_events.read() {
         let (mut dx, mut dy) = match mouse_wheel.unit {
@@ -692,7 +725,10 @@ pub(crate) fn structure_picker_scroll(
         }
     }
 
-    if picker_hovered && touch_gesture_state.rotate.length_squared() > 0.0004 {
+    let rotate_drag = touch_gesture_state.rotate.length_squared() > 0.0004;
+    if picker_hovered && rotate_drag {
+        picker_selection_state.suppress_for_touch_drag();
+        picker_selection_state.pending = None;
         for scroll_root in scroll_nodes.iter() {
             if let Ok(mut scroll_position) = scroll_positions.get_mut(scroll_root) {
                 scroll_position.offset_x -= touch_gesture_state.rotate.x;
@@ -719,6 +755,7 @@ fn is_descendant_or_self(mut entity: Entity, ancestor: Entity, parents: &Query<&
 pub(crate) fn structure_picker_result_buttons(
     mut interaction_query: Query<
         (
+            Entity,
             &Interaction,
             &StructurePickerResultButton,
             &mut BackgroundColor,
@@ -729,26 +766,52 @@ pub(crate) fn structure_picker_result_buttons(
     mut file_drag_drop: ResMut<crate::io::FileDragDrop>,
     catalog_channel: Option<Res<CatalogLoadChannel>>,
     theme: Res<UiTheme>,
+    mut picker_selection_state: ResMut<StructurePickerSelectionState>,
 ) {
-    for (interaction, selected, mut background) in &mut interaction_query {
+    let mut selected_path = None;
+
+    for (entity, interaction, selected, mut background) in &mut interaction_query {
         match *interaction {
             Interaction::Pressed => {
                 *background = BackgroundColor(themed_button_bg(theme.mode, Interaction::Pressed));
-                super::load_structure_from_catalog_path(
-                    &selected.path,
-                    &mut file_drag_drop,
-                    catalog_channel.as_deref(),
-                );
-                picker.visible = false;
-                set_structure_picker_keyboard_active(false);
+                if !picker_selection_state.is_suppressed() {
+                    picker_selection_state.pending = Some((entity, selected.path.clone()));
+                }
             }
             Interaction::Hovered => {
                 *background = BackgroundColor(themed_button_bg(theme.mode, Interaction::Hovered));
+
+                if let Some((pending_entity, pending_path)) = picker_selection_state.pending.take()
+                {
+                    if pending_entity == entity {
+                        if !picker_selection_state.is_suppressed() {
+                            selected_path = Some(pending_path);
+                        }
+                    } else {
+                        picker_selection_state.pending = Some((pending_entity, pending_path));
+                    }
+                }
             }
             Interaction::None => {
                 *background = BackgroundColor(themed_button_bg(theme.mode, Interaction::None));
+
+                if let Some((pending_entity, _)) = picker_selection_state.pending.as_ref() {
+                    if *pending_entity == entity {
+                        picker_selection_state.pending = None;
+                    }
+                }
             }
         }
+    }
+
+    if let Some(path) = selected_path {
+        super::load_structure_from_catalog_path(
+            &path,
+            &mut file_drag_drop,
+            catalog_channel.as_deref(),
+        );
+        picker.visible = false;
+        set_structure_picker_keyboard_active(false);
     }
 }
 
