@@ -18,6 +18,7 @@ use {
     crate::{get_web_theme, set_web_theme},
     gloo::net::http::Request,
     wasm_bindgen_futures::spawn_local,
+    web_sys::window,
 };
 
 use crate::constants::{get_element_color, get_element_size, get_residue_class_color};
@@ -1186,6 +1187,27 @@ pub(crate) fn setup_file_ui(mut commands: Commands, mut font_assets: ResMut<Asse
         visible: false,
     });
     let p = theme_palette(theme.mode);
+    let is_mobile = {
+        #[cfg(target_arch = "wasm32")]
+        let is_mobile = window()
+            .and_then(|window| window.navigator().user_agent().ok())
+            .is_some_and(|ua| {
+                let ua = ua.to_lowercase();
+                ua.contains("mobile") || ua.contains("android") || ua.contains("iphone")
+            });
+
+        #[cfg(not(target_arch = "wasm32"))]
+        let is_mobile = false;
+
+        is_mobile
+    };
+
+    let controls_hint = if is_mobile {
+        "Touch: one-finger: rotate, two-finger: pan, pinch: zoom"
+    } else {
+        "Doom-like: W/A/S/D move  Shift sprint  Q/E rotate  LMB rotate  RMB pan  Wheel zoom"
+    };
+
     let icon_font: Handle<Font> = font_assets.add(
         Font::try_from_bytes(
             include_bytes!(concat!(
@@ -1601,9 +1623,7 @@ pub(crate) fn setup_file_ui(mut commands: Commands, mut font_assets: ResMut<Asse
         ))
         .with_children(|bar| {
             bar.spawn((
-                Text::new(
-                    "Doom-like: W/A/S/D move  Shift sprint  Q/E rotate  LMB rotate  RMB pan  Wheel zoom  [Mobile: one-finger rotate, two-finger pan + pinch]",
-                ),
+                Text::new(controls_hint),
                 TextFont {
                     font_size: 11.0,
                     ..default()
