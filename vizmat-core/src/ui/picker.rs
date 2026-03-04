@@ -9,8 +9,8 @@ use gloo::utils::window;
 use web_sys::Event;
 
 use super::{
-    themed_button_bg, CatalogLoadChannel, HudButton, HudButtonLabel, ThemeMode, UiTheme,
-    DEFAULT_STRUCTURE_PATH,
+    themed_button_bg, CatalogLoadChannel, HudButton, HudButtonLabel, ThemeMode, TouchGestureState,
+    UiTheme, DEFAULT_STRUCTURE_PATH,
 };
 
 #[derive(Component)]
@@ -646,8 +646,17 @@ pub(crate) fn structure_picker_scroll(
     scroll_nodes: Query<Entity, With<StructurePickerResultsScroll>>,
     mut scroll_positions: Query<&mut ScrollPosition>,
     parents: Query<&ChildOf>,
+    touch_gesture_state: Res<TouchGestureState>,
     keyboard_input: Res<ButtonInput<KeyCode>>,
 ) {
+    let picker_hovered = scroll_nodes.iter().any(|scroll_root| {
+        hover_map.iter().any(|(_, pointer_map)| {
+            pointer_map
+                .iter()
+                .any(|(hovered, _)| is_descendant_or_self(*hovered, scroll_root, &parents))
+        })
+    });
+
     for mouse_wheel in mouse_wheel_events.read() {
         let (mut dx, mut dy) = match mouse_wheel.unit {
             MouseScrollUnit::Line => (mouse_wheel.x * 12.0, mouse_wheel.y * 12.0),
@@ -678,6 +687,16 @@ pub(crate) fn structure_picker_scroll(
                 }
             }
             if did_scroll {
+                break;
+            }
+        }
+    }
+
+    if picker_hovered && touch_gesture_state.rotate.length_squared() > 0.0004 {
+        for scroll_root in scroll_nodes.iter() {
+            if let Ok(mut scroll_position) = scroll_positions.get_mut(scroll_root) {
+                scroll_position.offset_x -= touch_gesture_state.rotate.x;
+                scroll_position.offset_y -= touch_gesture_state.rotate.y;
                 break;
             }
         }
