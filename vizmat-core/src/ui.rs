@@ -4,9 +4,8 @@ use std::collections::{BTreeSet, HashMap, HashSet, VecDeque};
 use std::path::PathBuf;
 
 use bevy::ecs::system::SystemParam;
-use bevy::input::keyboard::{Key, KeyboardInput};
 use bevy::input::mouse::{MouseMotion, MouseWheel};
-use bevy::input::ButtonState;
+use bevy::picking::hover::HoverMap;
 use bevy::prelude::*;
 use bevy::render::camera::Viewport;
 use bevy::render::view::RenderLayers;
@@ -31,6 +30,14 @@ use crate::io::FileStatusKind;
 use crate::structure::{
     AtomColorMode, AtomEntity, AtomIndex, Bond, BondCache, BondEntity, BondInferenceSettings,
     BondOrder, Crystal,
+};
+
+mod picker;
+pub(crate) use picker::{
+    parse_embedded_structure_entries, refresh_structure_picker_panel, setup_structure_picker_panel,
+    structure_picker_keyboard_search, structure_picker_result_buttons, structure_picker_scroll,
+    structure_picker_toggle_button, update_structure_picker_scroll_indicator,
+    StructurePickerResultsScroll, StructurePickerState, StructurePickerToggleButton,
 };
 
 const LAYER_GIZMO: RenderLayers = RenderLayers::layer(1);
@@ -109,30 +116,6 @@ pub(crate) struct ThemeToggleButton;
 
 #[derive(Component)]
 pub(crate) struct ThemeToggleIcon;
-
-#[derive(Component)]
-pub(crate) struct StructurePickerToggleButton;
-
-#[derive(Component)]
-pub(crate) struct StructurePickerPanel;
-
-#[derive(Component)]
-pub(crate) struct StructurePickerQueryText;
-
-#[derive(Component)]
-pub(crate) struct StructurePickerResultsRoot;
-
-#[derive(Component, Clone)]
-pub(crate) struct StructurePickerResultButton {
-    pub(crate) path: String,
-}
-
-#[derive(Resource, Default)]
-pub(crate) struct StructurePickerState {
-    pub(crate) entries: Vec<String>,
-    pub(crate) query: String,
-    pub(crate) visible: bool,
-}
 
 #[derive(Component)]
 pub(crate) struct HudTopBar;
@@ -814,33 +797,6 @@ type StructureLoadingNodeQueries<'w, 's> = (
     Query<'w, 's, &'static mut Node, With<StructureLoadingOverlay>>,
     Query<'w, 's, &'static mut Node, With<StructureLoadingProgressFill>>,
 );
-
-fn parse_embedded_structure_entries() -> Vec<String> {
-    EMBEDDED_STRUCTURE_LIST
-        .lines()
-        .map(str::trim)
-        .filter(|line| !line.is_empty() && !line.starts_with('#'))
-        .map(ToOwned::to_owned)
-        .collect()
-}
-
-fn structure_matches_query(path: &str, query: &str) -> bool {
-    if query.trim().is_empty() {
-        return true;
-    }
-    path.to_ascii_lowercase()
-        .contains(&query.trim().to_ascii_lowercase())
-}
-
-fn filtered_structure_entries(state: &StructurePickerState) -> Vec<String> {
-    state
-        .entries
-        .iter()
-        .filter(|entry| structure_matches_query(entry, &state.query))
-        .take(12)
-        .cloned()
-        .collect()
-}
 
 #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
 fn structures_local_dir() -> &'static str {
@@ -1555,55 +1511,7 @@ pub(crate) fn setup_file_ui(mut commands: Commands, mut font_assets: ResMut<Asse
                 });
         });
 
-    commands
-        .spawn((
-            Node {
-                position_type: PositionType::Absolute,
-                top: Val::Px(54.0),
-                left: Val::Px(10.0),
-                width: Val::Px(360.0),
-                max_height: Val::Px(320.0),
-                display: Display::None,
-                flex_direction: FlexDirection::Column,
-                row_gap: Val::Px(6.0),
-                padding: UiRect::all(Val::Px(8.0)),
-                border: UiRect::all(Val::Px(1.0)),
-                ..default()
-            },
-            BorderColor(p.border),
-            BackgroundColor(p.bar_bg_alt),
-            StructurePickerPanel,
-        ))
-        .with_children(|panel| {
-            panel.spawn((
-                Text::new("Search structures:"),
-                TextFont {
-                    font_size: 11.0,
-                    ..default()
-                },
-                TextColor(p.text_muted),
-                HudHelpText,
-            ));
-            panel.spawn((
-                Text::new(""),
-                TextFont {
-                    font_size: 12.0,
-                    ..default()
-                },
-                TextColor(p.text),
-                StructurePickerQueryText,
-            ));
-            panel.spawn((
-                Node {
-                    flex_direction: FlexDirection::Column,
-                    row_gap: Val::Px(4.0),
-                    overflow: Overflow::clip_y(),
-                    ..default()
-                },
-                BackgroundColor(Color::NONE),
-                StructurePickerResultsRoot,
-            ));
-        });
+    setup_structure_picker_panel(&mut commands, &theme, &icon_font);
 
     commands
         .spawn((
@@ -2338,194 +2246,6 @@ fn load_structure_from_catalog_path(
                 }
             };
         });
-    }
-}
-
-#[allow(clippy::type_complexity)]
-pub(crate) fn structure_picker_toggle_button(
-    mut interaction_query: Query<
-        (&Interaction, &mut BackgroundColor),
-        (Changed<Interaction>, With<StructurePickerToggleButton>),
-    >,
-    mut picker: ResMut<StructurePickerState>,
-    theme: Res<UiTheme>,
-) {
-    for (interaction, mut color) in &mut interaction_query {
-        match *interaction {
-            Interaction::Pressed => {
-                picker.visible = !picker.visible;
-                if picker.visible {
-                    picker.query.clear();
-                }
-                *color = BackgroundColor(themed_button_bg(theme.mode, Interaction::Pressed));
-            }
-            Interaction::Hovered => {
-                *color = BackgroundColor(themed_button_bg(theme.mode, Interaction::Hovered));
-            }
-            Interaction::None => {
-                *color = BackgroundColor(themed_button_bg(theme.mode, Interaction::None));
-            }
-        }
-    }
-}
-
-pub(crate) fn structure_picker_keyboard_search(
-    mut keyboard_events: EventReader<KeyboardInput>,
-    mut picker: ResMut<StructurePickerState>,
-    mut file_drag_drop: ResMut<crate::io::FileDragDrop>,
-    catalog_channel: Option<Res<CatalogLoadChannel>>,
-) {
-    if !picker.visible {
-        return;
-    }
-
-    for event in keyboard_events.read() {
-        if event.state != ButtonState::Pressed {
-            continue;
-        }
-
-        match &event.logical_key {
-            Key::Escape => {
-                picker.visible = false;
-            }
-            Key::Backspace => {
-                picker.query.pop();
-            }
-            Key::Enter => {
-                if let Some(first) = filtered_structure_entries(&picker).first().cloned() {
-                    load_structure_from_catalog_path(
-                        &first,
-                        &mut file_drag_drop,
-                        catalog_channel.as_deref(),
-                    );
-                    picker.visible = false;
-                }
-            }
-            Key::Character(_) => {
-                if let Some(text) = &event.text {
-                    // Keep search input simple and predictable for all layouts.
-                    if text.chars().all(|ch| !ch.is_control()) {
-                        picker.query.push_str(text);
-                    }
-                }
-            }
-            _ => {}
-        }
-    }
-}
-
-pub(crate) fn refresh_structure_picker_panel(
-    mut commands: Commands,
-    picker: Res<StructurePickerState>,
-    mut panel_query: Query<&mut Node, With<StructurePickerPanel>>,
-    mut query_text: Query<&mut Text, With<StructurePickerQueryText>>,
-    mut results_root_query: Query<(Entity, Option<&Children>), With<StructurePickerResultsRoot>>,
-    theme: Res<UiTheme>,
-) {
-    let Ok(mut panel_node) = panel_query.single_mut() else {
-        return;
-    };
-    panel_node.display = if picker.visible {
-        Display::Flex
-    } else {
-        Display::None
-    };
-
-    if !picker.visible {
-        return;
-    }
-
-    if let Ok(mut text) = query_text.single_mut() {
-        text.0 = if picker.query.is_empty() {
-            "Type to filter (Enter to load first match, Esc to close)".to_string()
-        } else {
-            format!("query: {}", picker.query)
-        };
-    }
-
-    if !picker.is_changed() && !theme.is_changed() {
-        return;
-    }
-
-    let Ok((results_root, maybe_children)) = results_root_query.single_mut() else {
-        return;
-    };
-    if let Some(children) = maybe_children {
-        for child in children.iter() {
-            commands.entity(child).despawn();
-        }
-    }
-
-    let palette = theme_palette(theme.mode);
-    for path in filtered_structure_entries(&picker) {
-        let label = if path == DEFAULT_STRUCTURE_PATH {
-            format!("DEFAULT · {path}")
-        } else {
-            path.clone()
-        };
-        commands.entity(results_root).with_children(|parent| {
-            parent
-                .spawn((
-                    Button,
-                    Node {
-                        width: Val::Percent(100.0),
-                        padding: UiRect::axes(Val::Px(8.0), Val::Px(4.0)),
-                        border: UiRect::all(Val::Px(1.0)),
-                        ..default()
-                    },
-                    BorderColor(palette.border),
-                    BackgroundColor(palette.button_bg),
-                    StructurePickerResultButton { path: path.clone() },
-                    HudButton,
-                ))
-                .with_children(|button| {
-                    button.spawn((
-                        Text::new(label),
-                        TextFont {
-                            font_size: 11.0,
-                            ..default()
-                        },
-                        TextColor(palette.text),
-                        HudButtonLabel,
-                    ));
-                });
-        });
-    }
-}
-
-#[allow(clippy::type_complexity)]
-pub(crate) fn structure_picker_result_buttons(
-    mut interaction_query: Query<
-        (
-            &Interaction,
-            &StructurePickerResultButton,
-            &mut BackgroundColor,
-        ),
-        (Changed<Interaction>, With<StructurePickerResultButton>),
-    >,
-    mut picker: ResMut<StructurePickerState>,
-    mut file_drag_drop: ResMut<crate::io::FileDragDrop>,
-    catalog_channel: Option<Res<CatalogLoadChannel>>,
-    theme: Res<UiTheme>,
-) {
-    for (interaction, selected, mut background) in &mut interaction_query {
-        match *interaction {
-            Interaction::Pressed => {
-                *background = BackgroundColor(themed_button_bg(theme.mode, Interaction::Pressed));
-                load_structure_from_catalog_path(
-                    &selected.path,
-                    &mut file_drag_drop,
-                    catalog_channel.as_deref(),
-                );
-                picker.visible = false;
-            }
-            Interaction::Hovered => {
-                *background = BackgroundColor(themed_button_bg(theme.mode, Interaction::Hovered));
-            }
-            Interaction::None => {
-                *background = BackgroundColor(themed_button_bg(theme.mode, Interaction::None));
-            }
-        }
     }
 }
 
@@ -3264,6 +2984,8 @@ pub(crate) fn camera_controls(
     mut touch_gestures: ResMut<TouchGestureState>,
     mut camera_rig: ResMut<CameraRig>,
     ui_interactions: Query<&Interaction, With<Button>>,
+    hover_map: Res<HoverMap>,
+    picker_scroll_nodes: Query<Entity, With<StructurePickerResultsScroll>>,
 ) {
     if let Ok(mut transform) = camera_query.single_mut() {
         let mut zoom_change = 0.0;
@@ -3276,6 +2998,11 @@ pub(crate) fn camera_controls(
         touch_gestures.pan = Vec2::ZERO;
         touch_gestures.zoom = 0.0;
         let ui_active = ui_interactions.iter().any(|i| *i != Interaction::None);
+        let picker_hovered = picker_scroll_nodes.iter().any(|picker_entity| {
+            hover_map
+                .iter()
+                .any(|(_, pointer_map)| pointer_map.contains_key(&picker_entity))
+        });
 
         const MIN_DISTANCE: f32 = 0.2;
         const MAX_DISTANCE: f32 = 200.0;
@@ -3289,7 +3016,7 @@ pub(crate) fn camera_controls(
         if !ui_active && mouse_buttons.pressed(MouseButton::Left) {
             rotate_request += mouse_delta;
         }
-        if !ui_active && touch_rotate != Vec2::ZERO {
+        if !ui_active && !picker_hovered && touch_rotate != Vec2::ZERO {
             rotate_request += touch_rotate;
         }
 
@@ -3331,19 +3058,19 @@ pub(crate) fn camera_controls(
             camera_rig.target = transform.translation + rotated_forward * distance;
         }
 
-        if !ui_active && mouse_buttons.pressed(MouseButton::Right) {
+        if !ui_active && !picker_hovered && mouse_buttons.pressed(MouseButton::Right) {
             pan_request = mouse_delta;
         }
-        if !ui_active && touch_pan != Vec2::ZERO {
+        if !ui_active && !picker_hovered && touch_pan != Vec2::ZERO {
             pan_request += touch_pan;
         }
 
-        if !ui_active {
+        if !ui_active && !picker_hovered {
             for wheel in mouse_wheel_events.read() {
                 zoom_change -= wheel.y * 0.002;
             }
         }
-        if !ui_active && touch_zoom != 0.0 {
+        if !ui_active && !picker_hovered && touch_zoom != 0.0 {
             zoom_change += touch_zoom * TOUCH_ZOOM_SCALE;
         }
 

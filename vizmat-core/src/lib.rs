@@ -38,12 +38,13 @@ use crate::ui::{
     handle_load_default_button, handle_open_file_button, hide_non_startup_controls,
     refresh_structure_picker_panel, reset_camera_button_interaction, setup_cameras, setup_file_ui,
     setup_light, setup_startup_screen, show_non_startup_controls, structure_picker_keyboard_search,
-    structure_picker_result_buttons, structure_picker_toggle_button, sync_atom_selection_highlight,
-    sync_color_mode_label, sync_gizmo_axis_rotation, toggle_light_attachment, toggle_theme_button,
-    transition_to_running_on_structure_loaded, update_atom_hover_cache, update_atom_hover_label,
-    update_bond_order_legend, update_color_mode_availability, update_file_ui,
-    update_gizmo_viewport, update_scene, update_selected_atom_from_click,
-    update_structure_loading_overlay, AppUiState, CatalogLoadChannel, TouchGestureState,
+    structure_picker_result_buttons, structure_picker_scroll, structure_picker_toggle_button,
+    sync_atom_selection_highlight, sync_color_mode_label, sync_gizmo_axis_rotation,
+    toggle_light_attachment, toggle_theme_button, transition_to_running_on_structure_loaded,
+    update_atom_hover_cache, update_atom_hover_label, update_bond_order_legend,
+    update_color_mode_availability, update_file_ui, update_gizmo_viewport, update_scene,
+    update_selected_atom_from_click, update_structure_loading_overlay,
+    update_structure_picker_scroll_indicator, AppUiState, CatalogLoadChannel, TouchGestureState,
 };
 use crate::ui::{setup_buttons, spawn_axis};
 
@@ -461,6 +462,8 @@ pub fn run_app() {
             Update,
             refresh_structure_picker_panel.after(structure_picker_keyboard_search),
         )
+        .add_systems(Update, update_structure_picker_scroll_indicator)
+        .add_systems(Update, structure_picker_scroll)
         .add_systems(Update, structure_picker_result_buttons)
         .add_systems(
             Update,
