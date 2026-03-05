@@ -20,6 +20,9 @@
     #01040a 100%
   );
   --canvas-bg: #030812;
+  --app-viewport-height: 100vh;
+  --app-canvas-height-desktop: min(80vh, 900px);
+  --app-canvas-height-mobile: min(82vh, 900px);
 }
 html[data-theme="light"] {
   --bg: #f7f8fb;
@@ -46,7 +49,7 @@ html[data-theme="light"] {
 }
 html, body {
   width: 100%;
-  height: 100%;
+  height: var(--app-viewport-height);
   touch-action: none;
   overscroll-behavior: none;
   user-select: none;
@@ -143,7 +146,7 @@ canvas {
   top: 50%;
   transform: translate(-50%, -50%);
   width: min(80vw, 1400px);
-  height: min(80vh, 900px);
+  height: var(--app-canvas-height-desktop);
   border-radius: 14px;
   overflow: hidden;
   border: 1px solid var(--line);
@@ -235,13 +238,21 @@ canvas {
   }
 }
 @media (max-width: 720px) {
+  html,
+  body {
+    position: fixed;
+    inset: 0;
+    overflow: hidden;
+  }
   .site-title {
     max-width: 66vw;
     line-height: 1.25;
   }
   .canvas-shell {
     width: 94vw;
-    height: 82vh;
+    height: var(--app-canvas-height-mobile);
+    top: 28px;
+    transform: translateX(-50%);
     border-radius: 10px;
   }
   header {
@@ -255,4 +266,8 @@ canvas {
     max-width: 60vw;
     font-size: 0.66rem;
   }
+}
+
+body.picker-keyboard-open {
+  overflow: hidden;
 }
