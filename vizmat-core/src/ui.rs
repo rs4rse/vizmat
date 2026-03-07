@@ -3,12 +3,14 @@
 use std::collections::{BTreeSet, HashMap, HashSet, VecDeque};
 use std::path::PathBuf;
 
+use bevy::asset::RenderAssetUsages;
 use bevy::ecs::system::SystemParam;
 use bevy::input::keyboard::{Key, KeyboardInput};
 use bevy::input::mouse::{MouseMotion, MouseWheel};
 use bevy::input::ButtonState;
 use bevy::prelude::*;
 use bevy::render::camera::Viewport;
+use bevy::render::mesh::{Indices, PrimitiveTopology};
 use bevy::render::view::RenderLayers;
 use bevy::ui::FocusPolicy;
 use bevy::ui::RelativeCursorPosition;
@@ -29,8 +31,7 @@ use crate::formats::SUPPORTED_EXTENSIONS;
 use crate::formats::SUPPORTED_EXTENSIONS_HELP;
 use crate::io::FileStatusKind;
 use crate::structure::{
-    AtomColorMode, AtomEntity, AtomIndex, Bond, BondCache, BondEntity, BondInferenceSettings,
-    BondOrder, Site, StructureView,
+    AtomColorMode, AtomEntity, AtomIndex, Bond, BondCache, BondEntity, BondInferenceSettings, BondOrder, LatticeEntity, Site, StructureView
 };
 
 const LAYER_GIZMO: RenderLayers = RenderLayers::layer(1);
@@ -2667,6 +2668,7 @@ pub(crate) fn update_scene(
     mut bond_cache: ResMut<BondCache>,
     atom_query: Query<Entity, With<AtomEntity>>,
     bond_query: Query<Entity, With<BondEntity>>,
+    lattice_query: Query<Entity, With<LatticeEntity>>,
     structure_root: Query<Entity, With<StructureRoot>>,
     mut last_bond_cfg: Local<Option<(bool, bool, f32, AtomColorMode)>>,
 ) {
@@ -2698,6 +2700,15 @@ pub(crate) fn update_scene(
             for entity in bond_query.iter() {
                 commands.entity(entity).despawn();
             }
+            // Clear existing lattice
+            for entity in lattice_query.iter() {
+                commands.entity(entity).despawn();
+            }
+
+
+            if matches!(sv.inner, ccmat_core::Structure::Crystal(_)) {
+                spawn_lattice(&mut commands, &mut materials, &mut meshes, &sv);
+            }
 
             // Spawn new atoms
             if let Ok(root_entity) = structure_root.single() {
@@ -2716,6 +2727,48 @@ pub(crate) fn update_scene(
             println!("Scene updated with new crystal structure");
         }
     }
+}
+
+fn spawn_lattice(
+    commands: &mut Commands,
+    materials: &mut ResMut<Assets<StandardMaterial>>,
+    meshes: &mut ResMut<Assets<Mesh>>,
+    sv: &StructureView,
+) {
+    // create cell axis
+    let ccmat_core::Structure::Crystal(crystal) = &sv.inner else {
+        unreachable!("crystal must have lattice")
+    };
+    let latt = &crystal.lattice(); // & to avoid clone
+    let (a, b, c) = (latt.a(), latt.b(), latt.c());
+    let a = Vec3::new(
+        f64::from(a[0]) as f32,
+        f64::from(a[1]) as f32,
+        f64::from(a[2]) as f32,
+    );
+    let b = Vec3::new(
+        f64::from(b[0]) as f32,
+        f64::from(b[1]) as f32,
+        f64::from(b[2]) as f32,
+    );
+    let c = Vec3::new(
+        f64::from(c[0]) as f32,
+        f64::from(c[1]) as f32,
+        f64::from(c[2]) as f32,
+    );
+    let mesh = create_wireframe_mesh(&a, &b, &c);
+    let mesh = meshes.add(mesh);
+    let material = materials.add(StandardMaterial {
+        base_color: Color::WHITE,
+        unlit: true,
+        ..default()
+    });
+    commands.spawn((
+        Mesh3d(mesh),
+        MeshMaterial3d(material),
+        Transform::default(),
+        LatticeEntity,
+    ));
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -3554,6 +3607,35 @@ pub fn reset_camera_button_interaction(
             }
         }
     }
+}
+
+// create box frames as the cell
+fn create_wireframe_mesh(a: &Vec3, b: &Vec3, c: &Vec3) -> Mesh {
+    // look at the direction of c
+    let vertices = vec![
+        // bottom
+        [0., 0., 0.],
+        [a.x, a.y, a.z],
+        [a.x + b.x, a.y + b.y, a.z + b.z],
+        [b.x, b.y, b.z],
+        // // top,
+        [c.x, c.y, c.z],
+        [c.x + a.x, c.y + a.y, c.z + a.z],
+        [c.x + a.x + b.x, c.y + a.y + b.y, c.z + a.z + b.z],
+        [c.x + b.x, c.x + b.y, c.z + b.z],
+    ];
+
+    let indices = vec![
+        0, 1, 1, 2, 2, 3, 3, 0, // bottom
+        4, 5, 5, 6, 6, 7, 7, 4, // top
+        0, 4, 1, 5, 2, 6, 3, 7, // sides
+    ];
+
+    let mut mesh = Mesh::new(PrimitiveTopology::LineList, RenderAssetUsages::default());
+    mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, vertices);
+
+    mesh.insert_indices(Indices::U32(indices));
+    mesh
 }
 
 #[cfg(test)]
