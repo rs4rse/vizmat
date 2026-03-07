@@ -31,7 +31,8 @@ use crate::formats::SUPPORTED_EXTENSIONS;
 use crate::formats::SUPPORTED_EXTENSIONS_HELP;
 use crate::io::FileStatusKind;
 use crate::structure::{
-    AtomColorMode, AtomEntity, AtomIndex, Bond, BondCache, BondEntity, BondInferenceSettings, BondOrder, LatticeEntity, Site, StructureView
+    AtomColorMode, AtomEntity, AtomIndex, Bond, BondCache, BondEntity, BondInferenceSettings,
+    BondOrder, LatticeEntity, Site, StructureView,
 };
 
 const LAYER_GIZMO: RenderLayers = RenderLayers::layer(1);
@@ -2704,7 +2705,6 @@ pub(crate) fn update_scene(
             for entity in lattice_query.iter() {
                 commands.entity(entity).despawn();
             }
-
 
             if matches!(sv.inner, ccmat_core::Structure::Crystal(_)) {
                 spawn_lattice(&mut commands, &mut materials, &mut meshes, &sv);
