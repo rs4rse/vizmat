@@ -1,14 +1,11 @@
 name: CI
-
 on:
   push:
     branches: [main]
   pull_request:
     branches: [main]
-
 env:
   CARGO_TERM_COLOR: always
-
 jobs:
   # Run cargo test
   test:
@@ -36,7 +33,7 @@ jobs:
         run: sudo apt-get update; sudo apt-get install --no-install-recommends libasound2-dev libudev-dev libwayland-dev
       - name: Run cargo test
         run: cargo test
-
+        working-directory: vizmat-core
   # Run cargo clippy -- -D warnings
   clippy_check:
     name: Clippy
@@ -65,7 +62,6 @@ jobs:
         run: sudo apt-get update; sudo apt-get install --no-install-recommends libasound2-dev libudev-dev libwayland-dev
       - name: Run clippy
         run: cargo clippy -- -D warnings
-
   # Run cargo fmt --all -- --check
   format:
     name: Format

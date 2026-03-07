@@ -7,7 +7,7 @@ use crate::constants::get_covalent_radius;
 // `#` is a macro. no inheritance. close to python decorator. injecting on top of something.
 // traits are like interfaces.
 #[derive(Debug, Clone)]
-pub struct Atom {
+pub struct Site {
     pub element: String,
     pub x: f32,
     pub y: f32,
@@ -16,12 +16,109 @@ pub struct Atom {
     pub res_name: Option<String>,
 }
 
-// Structure to hold our crystal data
+/// Structure view, with extra bonds information to be plot in canvas.
 #[derive(Resource, Clone)]
-pub struct Crystal {
-    pub atoms: Vec<Atom>,
+pub struct StructureView {
+    pub(crate) inner: ccmat_core::Structure,
     pub bonds: Option<Vec<Bond>>,
+    // XXX: I don't have a special Structure::BioMolecule to carry those in ccmat, so here this is
+    // the workaround before I pull in pdbtbx.
+    pub chain_ids: Option<Vec<String>>,
+    pub residues: Option<Vec<String>>,
+    // TODO: cache sites because sites() call do too much allocation.
 }
+
+impl StructureView {
+    // raw positions of view in visualizer is always cartesian.
+    pub(crate) fn positions(&self) -> Vec<[f32; 3]> {
+        match &self.inner {
+            ccmat_core::Structure::Crystal(inner) => inner
+                .positions()
+                .iter()
+                .map(|p| p.map(|s| f64::from(s) as f32))
+                .collect(),
+            ccmat_core::Structure::Molecule(inner) => inner
+                .positions()
+                .iter()
+                .map(|p| p.map(|s| f64::from(s) as f32))
+                .collect(),
+        }
+    }
+
+    pub(crate) fn elements(&self) -> Vec<String> {
+        self.inner.species().iter().map(|p| p.symbol()).collect()
+    }
+
+    pub(crate) fn sites(&self) -> Vec<Site> {
+        let positions = self.positions();
+
+        let chain_ids = self
+            .chain_ids
+            .clone()
+            .unwrap_or(vec!["".to_string(); positions.len()]);
+        let res_names = self
+            .residues
+            .clone()
+            .unwrap_or(vec!["".to_string(); positions.len()]);
+
+        positions
+            .iter()
+            .zip(self.elements())
+            .zip(chain_ids)
+            .zip(res_names)
+            .map(|(((p, e), cid), res)| {
+                let cid = (!cid.is_empty()).then_some(cid);
+                let res = (!res.is_empty()).then_some(res);
+                Site {
+                    element: e,
+                    x: p[0],
+                    y: p[1],
+                    z: p[2],
+                    chain_id: cid,
+                    res_name: res,
+                }
+            })
+            .collect()
+    }
+
+    pub(crate) fn nsites(&self) -> usize {
+        self.positions().len()
+    }
+
+    // pub(crate) fn set_bonds(&mut self, bonds: &[Bond]) {
+    //     self.bonds = Some(bonds.to_vec());
+    // }
+
+    // pub(crate) fn set_sites(&mut self, sites: &[Site]) {
+    //     // XXX: override the inner with reallocation, performance not good
+    //     let sites = sites
+    //         .iter()
+    //         .map(|s| {
+    //             // TODO: I should not rely directly on ccmat_core API call.
+    //             ccmat_core::SiteCartesian::new(
+    //                 Vector3([
+    //                     Angstrom::from(f64::from(s.x)),
+    //                     Angstrom::from(f64::from(s.y)),
+    //                     Angstrom::from(f64::from(s.z)),
+    //                 ]),
+    //                 atomic_number_from_symbol(&s.element).expect("not a valid symbol"),
+    //             )
+    //         })
+    //         .collect::<Vec<_>>();
+    //     self.inner = MoleculeBuilder::new().with_sites(sites).build_uncheck();
+    // }
+
+    pub fn has_explicit_bonds(&self) -> bool {
+        self.bonds.as_ref().is_some_and(|b| !b.is_empty())
+    }
+}
+
+// // Structure to hold our crystal data
+// #[derive(Resource, Clone)]
+// pub struct Crystal {
+//     pub atoms: Vec<Site>,
+//     pub bonds: Option<Vec<Bond>>,
+// }
 
 #[derive(Resource, Clone, Copy)]
 pub struct BondInferenceSettings {
@@ -117,61 +214,61 @@ impl Default for BondCache {
 // Event to update the structure with new atom positions
 #[derive(Event, Clone)]
 pub struct UpdateStructure {
-    pub atoms: Vec<Atom>,
+    pub inner: ccmat_core::Structure,
 }
 
 // System to handle incoming structure updates
-pub fn update_crystal_system(
-    crystal: Option<ResMut<Crystal>>,
+pub fn update_structure_system(
+    sv: Option<ResMut<StructureView>>,
     mut events: EventReader<UpdateStructure>,
 ) {
-    if let Some(mut crystal) = crystal {
+    if let Some(mut sv) = sv {
         for event in events.read() {
-            crystal.atoms.clone_from(&event.atoms);
+            sv.inner.clone_from(&event.inner);
         }
     }
 }
 
 pub fn mark_bond_cache_dirty(
-    crystal: Option<Res<Crystal>>,
+    sv: Option<Res<StructureView>>,
     bond_settings: Res<BondInferenceSettings>,
     mut bond_cache: ResMut<BondCache>,
 ) {
-    let Some(crystal) = crystal else {
+    let Some(sv) = sv else {
         return;
     };
 
-    if crystal.is_changed() || bond_settings.is_changed() {
+    if sv.is_changed() || bond_settings.is_changed() {
         bond_cache.is_dirty = true;
     }
 }
 
 #[inline]
-fn bond_cutoff(a: &Atom, b: &Atom, tolerance_scale: f32) -> f32 {
+fn bond_cutoff(a: &Site, b: &Site, tolerance_scale: f32) -> f32 {
     ((get_covalent_radius(&a.element) + get_covalent_radius(&b.element)) * tolerance_scale)
         .clamp(0.4, 2.4)
 }
 
-pub fn infer_bonds_grid(crystal: &Crystal, tolerance_scale: f32) -> Vec<Bond> {
-    let atoms = &crystal.atoms;
-    if atoms.len() < 2 {
+pub fn infer_bonds_grid(sv: &StructureView, tolerance_scale: f32) -> Vec<Bond> {
+    let sites = &sv.sites();
+    if sites.len() < 2 {
         return Vec::new();
     }
 
     let mut max_radius = 0.0_f32;
-    for atom in atoms {
-        max_radius = max_radius.max(get_covalent_radius(&atom.element));
+    for site in sites {
+        max_radius = max_radius.max(get_covalent_radius(&site.element));
     }
     let cell_size = (max_radius * 2.0 * tolerance_scale).clamp(1.2, 3.0);
 
     let mut grid: HashMap<(i32, i32, i32), Vec<usize>> = HashMap::new();
-    let mut bonds = Vec::with_capacity(atoms.len().saturating_mul(2));
+    let mut bonds = Vec::with_capacity(sites.len().saturating_mul(2));
 
-    for (i, atom) in atoms.iter().enumerate() {
+    for (i, site) in sites.iter().enumerate() {
         let cell = (
-            (atom.x / cell_size).floor() as i32,
-            (atom.y / cell_size).floor() as i32,
-            (atom.z / cell_size).floor() as i32,
+            (site.x / cell_size).floor() as i32,
+            (site.y / cell_size).floor() as i32,
+            (site.z / cell_size).floor() as i32,
         );
 
         for dx in -1..=1 {
@@ -180,11 +277,11 @@ pub fn infer_bonds_grid(crystal: &Crystal, tolerance_scale: f32) -> Vec<Bond> {
                     let neighbor_cell = (cell.0 + dx, cell.1 + dy, cell.2 + dz);
                     if let Some(candidates) = grid.get(&neighbor_cell) {
                         for &j in candidates {
-                            let other = &atoms[j];
-                            let cutoff = bond_cutoff(atom, other, tolerance_scale);
-                            let ddx = atom.x - other.x;
-                            let ddy = atom.y - other.y;
-                            let ddz = atom.z - other.z;
+                            let other = &sites[j];
+                            let cutoff = bond_cutoff(site, other, tolerance_scale);
+                            let ddx = site.x - other.x;
+                            let ddy = site.y - other.y;
+                            let ddz = site.z - other.z;
                             let dist_sq = ddx * ddx + ddy * ddy + ddz * ddz;
                             if dist_sq <= cutoff * cutoff {
                                 bonds.push(Bond {
@@ -205,30 +302,24 @@ pub fn infer_bonds_grid(crystal: &Crystal, tolerance_scale: f32) -> Vec<Bond> {
     bonds
 }
 
-impl Crystal {
-    pub fn has_explicit_bonds(&self) -> bool {
-        self.bonds.as_ref().is_some_and(|b| !b.is_empty())
-    }
-}
-
 pub fn resolve_bonds(
-    crystal: &Crystal,
+    sv: &StructureView,
     settings: &BondInferenceSettings,
 ) -> (Vec<Bond>, BondSourceMode) {
     if !settings.enabled {
         return (Vec::new(), BondSourceMode::Disabled);
     }
-    if let Some(file_bonds) = crystal.bonds.as_ref().filter(|b| !b.is_empty()) {
+    if let Some(file_bonds) = sv.bonds.as_ref().filter(|b| !b.is_empty()) {
         return (file_bonds.clone(), BondSourceMode::File);
     }
     (
-        infer_bonds_grid(crystal, settings.tolerance_scale),
+        infer_bonds_grid(sv, settings.tolerance_scale),
         BondSourceMode::Inferred,
     )
 }
 
 impl BondCache {
-    fn can_reuse(&self, crystal: &Crystal, settings: &BondInferenceSettings) -> bool {
+    fn can_reuse(&self, sv: &StructureView, settings: &BondInferenceSettings) -> bool {
         if !self.valid || self.is_dirty {
             return false;
         }
@@ -237,7 +328,7 @@ impl BondCache {
             return false;
         }
 
-        if self.atom_count != crystal.atoms.len() {
+        if self.atom_count != sv.nsites() {
             return false;
         }
 
@@ -245,14 +336,14 @@ impl BondCache {
             return self.source == BondSourceMode::Disabled;
         }
 
-        let has_file_bonds = crystal.bonds.as_ref().is_some_and(|b| !b.is_empty());
+        let has_file_bonds = sv.bonds.as_ref().is_some_and(|b| !b.is_empty());
         if has_file_bonds != self.has_file_bonds {
             return false;
         }
 
         if has_file_bonds {
             return self.source == BondSourceMode::File
-                && self.file_bond_count == crystal.bonds.as_ref().map_or(0, Vec::len);
+                && self.file_bond_count == sv.bonds.as_ref().map_or(0, Vec::len);
         }
 
         self.source == BondSourceMode::Inferred
@@ -261,19 +352,19 @@ impl BondCache {
 
     pub fn resolve_bonds_cached<'a>(
         &'a mut self,
-        crystal: &Crystal,
+        sv: &StructureView,
         settings: &BondInferenceSettings,
     ) -> (&'a [Bond], BondSourceMode) {
-        if self.can_reuse(crystal, settings) {
+        if self.can_reuse(sv, settings) {
             return (&self.bonds, self.source);
         }
 
-        let (next_bonds, source) = resolve_bonds(crystal, settings);
+        let (next_bonds, source) = resolve_bonds(sv, settings);
         self.bonds = next_bonds;
         self.source = source;
-        self.atom_count = crystal.atoms.len();
-        self.file_bond_count = crystal.bonds.as_ref().map_or(0, Vec::len);
-        self.has_file_bonds = crystal.has_explicit_bonds();
+        self.atom_count = sv.nsites();
+        self.file_bond_count = sv.bonds.as_ref().map_or(0, Vec::len);
+        self.has_file_bonds = sv.has_explicit_bonds();
         self.infer_tolerance_scale = settings.tolerance_scale;
         self.settings_enabled = settings.enabled;
         self.is_dirty = false;
@@ -288,7 +379,7 @@ mod tests {
     use std::path::PathBuf;
 
     use crate::formats::parse_structure_by_extension;
-    use crate::structure::{BondCache, BondInferenceSettings, BondSourceMode, Crystal};
+    use crate::structure::{BondCache, BondInferenceSettings, BondSourceMode, StructureView};
 
     fn asset_file(path: &str) -> PathBuf {
         PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -296,7 +387,7 @@ mod tests {
             .join(path)
     }
 
-    fn load_structure(path: &str) -> Crystal {
+    fn load_structure(path: &str) -> StructureView {
         let full_path = asset_file(path);
         let ext = full_path
             .extension()
