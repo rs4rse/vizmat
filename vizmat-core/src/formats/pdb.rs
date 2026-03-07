@@ -1,11 +1,25 @@
 use anyhow::{Context, Result};
+use ccmat_core::{atomic_number_from_symbol, math::Vector3, Angstrom, MoleculeBuilder};
 
-use crate::structure::{Atom, Crystal};
+use crate::structure::{Site, StructureView};
 
-pub(super) fn parse_pdb_content(contents: &str) -> Result<Crystal> {
-    let mut atoms = Vec::new();
+fn norm_ele(s: &str) -> String {
+    s.chars()
+        .enumerate()
+        .map(|(i, c)| {
+            if i == 0 {
+                c.to_ascii_uppercase()
+            } else {
+                c.to_ascii_lowercase()
+            }
+        })
+        .collect()
+}
 
-    for line in contents.lines() {
+pub(super) fn parse_pdb_content(content: &str) -> Result<StructureView> {
+    let mut sites = Vec::new();
+
+    for line in content.lines() {
         if !(line.starts_with("ATOM  ") || line.starts_with("HETATM")) {
             continue;
         }
@@ -62,7 +76,7 @@ pub(super) fn parse_pdb_content(contents: &str) -> Result<Crystal> {
             continue;
         }
 
-        atoms.push(Atom {
+        sites.push(Site {
             element,
             x,
             y,
@@ -72,13 +86,39 @@ pub(super) fn parse_pdb_content(contents: &str) -> Result<Crystal> {
         });
     }
 
-    if atoms.is_empty() {
+    if sites.is_empty() {
         return Err(anyhow::anyhow!(
             "PDB file contains no ATOM/HETATM coordinates"
         ));
     }
 
-    Ok(Crystal { atoms, bonds: None })
+    let (sites, chain_ids, residues) = sites
+        .into_iter()
+        .map(|s| {
+            // TODO: I should not rely directly on ccmat_core API call.
+            let element = norm_ele(&s.element);
+            let site = ccmat_core::SiteCartesian::new(
+                Vector3([
+                    Angstrom::from(f64::from(s.x)),
+                    Angstrom::from(f64::from(s.y)),
+                    Angstrom::from(f64::from(s.z)),
+                ]),
+                atomic_number_from_symbol(&element).expect("not a valid symbol"),
+            );
+            (site, s.chain_id, s.res_name)
+        })
+        .collect::<(Vec<_>, Vec<_>, Vec<_>)>();
+    let mol = MoleculeBuilder::new().with_sites(sites).build_uncheck();
+    let chain_ids: Option<Vec<String>> = chain_ids.into_iter().collect();
+    let residues: Option<Vec<String>> = residues.into_iter().collect();
+    let s = StructureView {
+        inner: ccmat_core::Structure::Molecule(mol),
+        bonds: None,
+        chain_ids,
+        residues,
+    };
+
+    Ok(s)
 }
 
 #[cfg(test)]
@@ -95,16 +135,16 @@ HETATM    3  O   HOH B 101       9.301  10.200   7.100  1.00 10.00           O
 END
 ";
 
-        let crystal = parse_pdb_content(pdb).expect("expected pdb parse success");
-        assert_eq!(crystal.atoms.len(), 3);
+        let mol = parse_pdb_content(pdb).expect("expected pdb parse success");
+        assert_eq!(mol.sites().len(), 3);
 
-        assert_eq!(crystal.atoms[0].element, "N");
-        assert_eq!(crystal.atoms[0].chain_id.as_deref(), Some("A"));
-        assert_eq!(crystal.atoms[0].res_name.as_deref(), Some("MET"));
+        assert_eq!(mol.sites()[0].element, "N");
+        assert_eq!(mol.sites()[0].chain_id.as_deref(), Some("A"));
+        assert_eq!(mol.sites()[0].res_name.as_deref(), Some("MET"));
 
-        assert_eq!(crystal.atoms[2].element, "O");
-        assert_eq!(crystal.atoms[2].chain_id.as_deref(), Some("B"));
-        assert_eq!(crystal.atoms[2].res_name.as_deref(), Some("HOH"));
+        assert_eq!(mol.sites()[2].element, "O");
+        assert_eq!(mol.sites()[2].chain_id.as_deref(), Some("B"));
+        assert_eq!(mol.sites()[2].res_name.as_deref(), Some("HOH"));
     }
 
     #[test]
@@ -114,11 +154,11 @@ ATOM      1  CL  LIG A   1       1.000   2.000   3.000  1.00 20.00
 END
 ";
 
-        let crystal = parse_pdb_content(pdb).expect("expected pdb parse success");
-        assert_eq!(crystal.atoms.len(), 1);
-        assert_eq!(crystal.atoms[0].element, "CL");
-        assert_eq!(crystal.atoms[0].chain_id.as_deref(), Some("A"));
-        assert_eq!(crystal.atoms[0].res_name.as_deref(), Some("LIG"));
+        let mol = parse_pdb_content(pdb).expect("expected pdb parse success");
+        assert_eq!(mol.sites().len(), 1);
+        assert_eq!(mol.sites()[0].element, "Cl");
+        assert_eq!(mol.sites()[0].chain_id.as_deref(), Some("A"));
+        assert_eq!(mol.sites()[0].res_name.as_deref(), Some("LIG"));
     }
 
     #[test]

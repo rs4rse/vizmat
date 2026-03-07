@@ -1,9 +1,10 @@
 use anyhow::{Context, Result};
+use ccmat_core::{atomic_number_from_symbol, math::Vector3, Angstrom, MoleculeBuilder};
 
-use crate::structure::{Atom, Crystal};
+use crate::structure::{Site, StructureView};
 
-pub(super) fn parse_sdf_content(contents: &str) -> Result<Crystal> {
-    let first_record = contents.split("$$$$").next().unwrap_or(contents);
+pub(super) fn parse_sdf_content(content: &str) -> Result<StructureView> {
+    let first_record = content.split("$$$$").next().unwrap_or(content);
     let lines: Vec<&str> = first_record.lines().collect();
 
     let Some((counts_line_index, counts_line)) = lines
@@ -20,7 +21,7 @@ pub(super) fn parse_sdf_content(contents: &str) -> Result<Crystal> {
         return Err(anyhow::anyhow!("SDF V3000 is not supported yet"));
     }
 
-    let atom_count = parse_count_field(counts_line, 0..3)
+    let nsites = parse_count_field(counts_line, 0..3)
         .or_else(|_| parse_count_tokens(counts_line, 0))
         .context("Failed to parse SDF atom count")?;
     let bond_count = parse_count_field(counts_line, 3..6)
@@ -28,9 +29,9 @@ pub(super) fn parse_sdf_content(contents: &str) -> Result<Crystal> {
         .context("Failed to parse SDF bond count")?;
 
     let atom_block_start = counts_line_index + 1;
-    let mut atoms = Vec::with_capacity(atom_count);
+    let mut sites = Vec::with_capacity(nsites);
 
-    for atom_idx in 0..atom_count {
+    for atom_idx in 0..nsites {
         let line = lines
             .get(atom_block_start + atom_idx)
             .copied()
@@ -41,7 +42,7 @@ pub(super) fn parse_sdf_content(contents: &str) -> Result<Crystal> {
             return Err(anyhow::anyhow!("Malformed SDF atom line: {line}"));
         }
 
-        atoms.push(Atom {
+        sites.push(Site {
             x: parts[0]
                 .parse()
                 .context("Failed to parse SDF x coordinate")?,
@@ -57,7 +58,7 @@ pub(super) fn parse_sdf_content(contents: &str) -> Result<Crystal> {
         });
     }
 
-    let bond_block_start = atom_block_start + atom_count;
+    let bond_block_start = atom_block_start + nsites;
     let mut bonds = Vec::with_capacity(bond_count);
     for bond_idx in 0..bond_count {
         let line = lines
@@ -84,20 +85,41 @@ pub(super) fn parse_sdf_content(contents: &str) -> Result<Crystal> {
         }
         let a = a_raw - 1;
         let b = b_raw - 1;
-        if a >= atom_count || b >= atom_count || a == b {
+        if a >= nsites || b >= nsites || a == b {
             continue;
         }
 
         bonds.push(crate::structure::Bond { a, b, order });
     }
 
-    if atoms.is_empty() {
+    if sites.is_empty() {
         return Err(anyhow::anyhow!("SDF file contains no atoms"));
     }
 
-    let bonds = if bonds.is_empty() { None } else { Some(bonds) };
+    let sites = sites
+        .iter()
+        .map(|s| {
+            // TODO: I should not rely directly on ccmat_core API call.
+            ccmat_core::SiteCartesian::new(
+                Vector3([
+                    Angstrom::from(f64::from(s.x)),
+                    Angstrom::from(f64::from(s.y)),
+                    Angstrom::from(f64::from(s.z)),
+                ]),
+                atomic_number_from_symbol(&s.element).expect("not a valid symbol"),
+            )
+        })
+        .collect::<Vec<_>>();
+    let mol = MoleculeBuilder::new().with_sites(sites).build_uncheck();
+    let bonds = if bond_count > 0 { Some(bonds) } else { None };
+    let s = StructureView {
+        inner: ccmat_core::Structure::Molecule(mol),
+        bonds,
+        chain_ids: None,
+        residues: None,
+    };
 
-    Ok(Crystal { atoms, bonds })
+    Ok(s)
 }
 
 fn parse_count_field(line: &str, range: std::ops::Range<usize>) -> Result<usize> {
@@ -140,11 +162,11 @@ Naproxen
 M  END
 $$$$
 ";
-        let crystal = parse_sdf_content(sdf).expect("expected sdf parse success");
-        assert_eq!(crystal.atoms.len(), 3);
-        assert_eq!(crystal.atoms[0].element, "C");
-        assert_eq!(crystal.atoms[1].element, "O");
-        let bonds = crystal.bonds.expect("expected parsed sdf bonds");
+        let mol = parse_sdf_content(sdf).expect("expected sdf parse success");
+        assert_eq!(mol.nsites(), 3);
+        assert_eq!(mol.sites()[0].element, "C");
+        assert_eq!(mol.sites()[1].element, "O");
+        let bonds = mol.bonds.expect("expected parsed sdf bonds");
         assert_eq!(bonds.len(), 2);
         assert_eq!(bonds[0].order, 2);
         assert_eq!(bonds[1].order, 1);
@@ -161,10 +183,10 @@ SingleAtom
 M  END
 $$$$
 ";
-        let crystal = parse_sdf_content(sdf).expect("expected sdf parse success");
-        assert_eq!(crystal.atoms.len(), 1);
+        let mol = parse_sdf_content(sdf).expect("expected sdf parse success");
+        assert_eq!(mol.nsites(), 1);
         assert!(
-            crystal.bonds.is_none(),
+            mol.bonds.is_none(),
             "zero-bond SDF should be treated as no explicit bonds"
         );
     }
