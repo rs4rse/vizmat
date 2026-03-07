@@ -3,6 +3,19 @@ use ccmat_core::{atomic_number_from_symbol, math::Vector3, Angstrom, MoleculeBui
 
 use crate::structure::{Site, StructureView};
 
+fn norm_ele(s: &str) -> String {
+    s.chars()
+        .enumerate()
+        .map(|(i, c)| {
+            if i == 0 {
+                c.to_ascii_uppercase()
+            } else {
+                c.to_ascii_lowercase()
+            }
+        })
+        .collect()
+}
+
 pub(super) fn parse_pdb_content(content: &str) -> Result<StructureView> {
     let mut sites = Vec::new();
 
@@ -79,24 +92,30 @@ pub(super) fn parse_pdb_content(content: &str) -> Result<StructureView> {
         ));
     }
 
-    let sites = sites
-        .iter()
+    let (sites, chain_ids, residues) = sites
+        .into_iter()
         .map(|s| {
             // TODO: I should not rely directly on ccmat_core API call.
-            ccmat_core::SiteCartesian::new(
+            let element = norm_ele(&s.element);
+            let site = ccmat_core::SiteCartesian::new(
                 Vector3([
                     Angstrom::from(f64::from(s.x)),
                     Angstrom::from(f64::from(s.y)),
                     Angstrom::from(f64::from(s.z)),
                 ]),
-                atomic_number_from_symbol(&s.element).expect("not a valid symbol"),
-            )
+                atomic_number_from_symbol(&element).expect("not a valid symbol"),
+            );
+            (site, s.chain_id, s.res_name)
         })
-        .collect::<Vec<_>>();
+        .collect::<(Vec<_>, Vec<_>, Vec<_>)>();
     let mol = MoleculeBuilder::new().with_sites(sites).build_uncheck();
+    let chain_ids: Option<Vec<String>> = chain_ids.into_iter().collect();
+    let residues: Option<Vec<String>> = residues.into_iter().collect();
     let s = StructureView {
         inner: ccmat_core::Structure::Molecule(mol),
         bonds: None,
+        chain_ids,
+        residues,
     };
 
     Ok(s)
@@ -137,7 +156,7 @@ END
 
         let mol = parse_pdb_content(pdb).expect("expected pdb parse success");
         assert_eq!(mol.sites().len(), 1);
-        assert_eq!(mol.sites()[0].element, "CL");
+        assert_eq!(mol.sites()[0].element, "Cl");
         assert_eq!(mol.sites()[0].chain_id.as_deref(), Some("A"));
         assert_eq!(mol.sites()[0].res_name.as_deref(), Some("LIG"));
     }

@@ -1,3 +1,6 @@
 [submodule "ccmat"]
 	path = ccmat
 	url = https://github.com/unkcpz/ccmat.git
+[submodule "vizmat-app/assets/structures"]
+	path = vizmat-app/assets/structures
+	url = https://github.com/syzer/vizmat-structures.git

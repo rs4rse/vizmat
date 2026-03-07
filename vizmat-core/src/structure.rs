@@ -18,9 +18,13 @@ pub struct Site {
 
 /// Structure view, with extra bonds information to be plot in canvas.
 #[derive(Resource, Clone)]
-pub(crate) struct StructureView {
+pub struct StructureView {
     pub(crate) inner: ccmat_core::Structure,
     pub bonds: Option<Vec<Bond>>,
+    // XXX: I don't have a special Structure::BioMolecule to carry those in ccmat, so here this is
+    // the workaround before I pull in pdbtbx.
+    pub chain_ids: Option<Vec<String>>,
+    pub residues: Option<Vec<String>>,
     // TODO: cache sites because sites() call do too much allocation.
 }
 
@@ -46,16 +50,33 @@ impl StructureView {
     }
 
     pub(crate) fn sites(&self) -> Vec<Site> {
-        self.positions()
+        let positions = self.positions();
+
+        let chain_ids = self
+            .chain_ids
+            .clone()
+            .unwrap_or(vec!["".to_string(); positions.len()]);
+        let res_names = self
+            .residues
+            .clone()
+            .unwrap_or(vec!["".to_string(); positions.len()]);
+
+        positions
             .iter()
             .zip(self.elements())
-            .map(|(p, e)| Site {
-                element: e,
-                x: p[0],
-                y: p[1],
-                z: p[2],
-                chain_id: None,
-                res_name: None,
+            .zip(chain_ids)
+            .zip(res_names)
+            .map(|(((p, e), cid), res)| {
+                let cid = (!cid.is_empty()).then_some(cid);
+                let res = (!res.is_empty()).then_some(res);
+                Site {
+                    element: e,
+                    x: p[0],
+                    y: p[1],
+                    z: p[2],
+                    chain_id: cid,
+                    res_name: res,
+                }
             })
             .collect()
     }
@@ -147,7 +168,7 @@ pub struct BondEntity;
 #[derive(Component, Debug, Clone, Copy)]
 pub struct BondOrder(pub u8);
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Bond {
     pub a: usize,
     pub b: usize,
@@ -159,6 +180,35 @@ pub enum BondSourceMode {
     Disabled,
     File,
     Inferred,
+}
+
+#[derive(Resource, Clone)]
+pub struct BondCache {
+    pub is_dirty: bool,
+    pub bonds: Vec<Bond>,
+    pub source: BondSourceMode,
+    pub valid: bool,
+    pub atom_count: usize,
+    pub file_bond_count: usize,
+    pub has_file_bonds: bool,
+    pub infer_tolerance_scale: f32,
+    pub settings_enabled: bool,
+}
+
+impl Default for BondCache {
+    fn default() -> Self {
+        Self {
+            is_dirty: true,
+            bonds: Vec::new(),
+            source: BondSourceMode::Disabled,
+            valid: false,
+            atom_count: 0,
+            file_bond_count: 0,
+            has_file_bonds: false,
+            infer_tolerance_scale: 0.0,
+            settings_enabled: true,
+        }
+    }
 }
 
 // Event to update the structure with new atom positions
@@ -176,6 +226,20 @@ pub fn update_structure_system(
         for event in events.read() {
             sv.inner.clone_from(&event.inner);
         }
+    }
+}
+
+pub fn mark_bond_cache_dirty(
+    sv: Option<Res<StructureView>>,
+    bond_settings: Res<BondInferenceSettings>,
+    mut bond_cache: ResMut<BondCache>,
+) {
+    let Some(sv) = sv else {
+        return;
+    };
+
+    if sv.is_changed() || bond_settings.is_changed() {
+        bond_cache.is_dirty = true;
     }
 }
 
@@ -252,4 +316,100 @@ pub fn resolve_bonds(
         infer_bonds_grid(sv, settings.tolerance_scale),
         BondSourceMode::Inferred,
     )
+}
+
+impl BondCache {
+    fn can_reuse(&self, sv: &StructureView, settings: &BondInferenceSettings) -> bool {
+        if !self.valid || self.is_dirty {
+            return false;
+        }
+
+        if self.settings_enabled != settings.enabled {
+            return false;
+        }
+
+        if self.atom_count != sv.nsites() {
+            return false;
+        }
+
+        if !settings.enabled {
+            return self.source == BondSourceMode::Disabled;
+        }
+
+        let has_file_bonds = sv.bonds.as_ref().is_some_and(|b| !b.is_empty());
+        if has_file_bonds != self.has_file_bonds {
+            return false;
+        }
+
+        if has_file_bonds {
+            return self.source == BondSourceMode::File
+                && self.file_bond_count == sv.bonds.as_ref().map_or(0, Vec::len);
+        }
+
+        self.source == BondSourceMode::Inferred
+            && (self.infer_tolerance_scale - settings.tolerance_scale).abs() <= f32::EPSILON
+    }
+
+    pub fn resolve_bonds_cached<'a>(
+        &'a mut self,
+        sv: &StructureView,
+        settings: &BondInferenceSettings,
+    ) -> (&'a [Bond], BondSourceMode) {
+        if self.can_reuse(sv, settings) {
+            return (&self.bonds, self.source);
+        }
+
+        let (next_bonds, source) = resolve_bonds(sv, settings);
+        self.bonds = next_bonds;
+        self.source = source;
+        self.atom_count = sv.nsites();
+        self.file_bond_count = sv.bonds.as_ref().map_or(0, Vec::len);
+        self.has_file_bonds = sv.has_explicit_bonds();
+        self.infer_tolerance_scale = settings.tolerance_scale;
+        self.settings_enabled = settings.enabled;
+        self.is_dirty = false;
+        self.valid = true;
+
+        (&self.bonds, self.source)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::PathBuf;
+
+    use crate::formats::parse_structure_by_extension;
+    use crate::structure::{BondCache, BondInferenceSettings, BondSourceMode, StructureView};
+
+    fn asset_file(path: &str) -> PathBuf {
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../vizmat-app/assets/structures")
+            .join(path)
+    }
+
+    fn load_structure(path: &str) -> StructureView {
+        let full_path = asset_file(path);
+        let ext = full_path
+            .extension()
+            .and_then(|e| e.to_str())
+            .unwrap_or_default();
+        let contents =
+            std::fs::read_to_string(&full_path).expect("expected structure asset to be readable");
+        parse_structure_by_extension(ext, &contents).expect("expected structure parse success")
+    }
+
+    #[test]
+    fn inferred_bonds_cached_6vxx() {
+        let crystal = load_structure("proteins/6VXX.pdb");
+        let settings = BondInferenceSettings::default();
+        let mut cache = BondCache::default();
+
+        let (first_bonds, first_source) = cache.resolve_bonds_cached(&crystal, &settings);
+        assert_eq!(first_source, BondSourceMode::Inferred);
+        let first_bonds = first_bonds.to_vec();
+
+        let (second_bonds, second_source) = cache.resolve_bonds_cached(&crystal, &settings);
+        assert_eq!(second_source, BondSourceMode::Inferred);
+        assert_eq!(first_bonds, second_bonds);
+    }
 }

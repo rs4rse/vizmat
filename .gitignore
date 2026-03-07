@@ -4,3 +4,5 @@
 
 /vizmat-app/dist
 /vizmat-app/assets/proteins/
+
+.DS_Store

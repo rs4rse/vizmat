@@ -1,56 +1,15 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" data-theme="dark">
   <head>
     <meta charset="UTF-8">
     <title>vizmat: a cross platform crystal visualizer</title>
-    <style>
-      body {
-        margin: 0;
-        font-family: sans-serif;
-        display: flex;
-        flex-direction: column;
-        align-items: center;
-      }
-      header {
-        width: 80%; /* header less than full width if desired */
-        max-width: 1200px; /* optional max width */
-        color: white;
-        display: flex;
-        justify-content: flex-end; /* push content to the right */
-        align-items: center;
-        padding: 0.5rem 1rem;
-        height: 50px;
-        margin-top: 0;
-        margin-bottom: 0.5rem;
-        box-sizing: border-box;
-      }
-      header h1 {
-        font-size: 0.5rem; /* smaller than before */
-        font-weight: 500;
-        margin: 0;
-        font-family: 'Roboto', sans-serif;
-        letter-spacing: 0.5px; /* subtle style */
-      }
-      header a {
-        color: black;
-        text-decoration: none;
-        display: flex;
-        align-items: center;
-      }
-      header a img {
-        height: 24px;
-        margin-left: 0.5rem;
-      }
-      #canvas-container {
-        width: 80%; /* same width as header */
-        max-width: 1200px;
-      }
-      canvas {
-        width: 100%; /* fill the container */
-        height: 80vh; /* or any desired height */
-        display: block;
-      }
-    </style>
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1, maximum-scale=1, minimum-scale=1, user-scalable=no"
+    >
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;700&display=swap" rel="stylesheet">
   </head>
   <body>
     <link
@@ -60,14 +19,36 @@
     data-wasm-opt-params="--enable-bulk-memory --enable-nontrapping-float-to-int"
     data-bin="vizmat-app"
     data-cargo-no-default-features="true" />
-    <h1>molecule🧬/crystal🧊 visualizer go brrr 👀</h1>
+    <link data-trunk rel="copy-dir" href="assets" />
+    <link data-trunk rel="copy-file" href="index.js" />
+    <link data-trunk rel="copy-file" href="mobile-gesture.js" />
+    <link data-trunk rel="copy-file" href="style.css" />
+    <link href="style.css" rel="stylesheet" />
+    <script type="module" src="./index.js"></script>
+    <script type="module" src="./mobile-gesture.js"></script>
+    <h1 class="site-title">vizmat <span>molecule / crystal</span> visual lab</h1>
     <header>
       <a href="https://github.com/rs4rse/vizmat" target="_blank">
-        like me ──★ ˙🍓 ̟ !!
+        Star on GitHub
         <img src="https://img.shields.io/github/stars/rs4rse/vizmat" alt="GitHub stars">
       </a>
     </header>
-    <canvas id="bevy-canvas"></canvas>
-    <script type="module" src="./index.js"></script>
+    <div class="hint">
+      <strong>Doom-like controls:</strong>
+      <span class="key">W/A/S/D</span> move,
+      <span class="key">Shift</span> sprint,
+      <span class="key">Q/E</span> rotate
+    </div>
+    <div id="app-loader" class="loader" aria-live="polite">
+      <p class="loader-brand">vizmat <span>molecule / crystal</span> visual lab</p>
+      <div class="loader-card">
+        <div class="spinner"></div>
+        <p class="loader-title">Loading vizmat</p>
+        <p id="loader-status" class="loader-status">Compiling shaders and booting WebAssembly...</p>
+      </div>
+    </div>
+    <div class="canvas-shell">
+      <canvas id="bevy-canvas"></canvas>
+    </div>
   </body>
 </html>

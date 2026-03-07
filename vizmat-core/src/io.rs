@@ -29,6 +29,8 @@ pub(crate) fn load_default_structure(mut commands: Commands) {
     let s = StructureView {
         inner: ccmat_core::Structure::Molecule(mol),
         bonds: None,
+        chain_ids: None,
+        residues: None,
     };
 
     commands.insert_resource(s);

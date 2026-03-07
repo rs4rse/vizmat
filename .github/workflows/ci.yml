@@ -33,6 +33,7 @@ jobs:
         run: sudo apt-get update; sudo apt-get install --no-install-recommends libasound2-dev libudev-dev libwayland-dev
       - name: Run cargo test
         run: cargo test
+        working-directory: vizmat-core
   # Run cargo clippy -- -D warnings
   clippy_check:
     name: Clippy

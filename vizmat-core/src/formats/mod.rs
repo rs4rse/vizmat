@@ -14,13 +14,18 @@ pub(crate) fn is_supported_extension(ext: &str) -> bool {
     SUPPORTED_EXTENSIONS.contains(&normalized.as_str())
 }
 
-pub(crate) fn parse_structure_by_extension(ext: &str, content: &str) -> Result<StructureView> {
+pub fn parse_structure_by_extension(ext: &str, content: &str) -> Result<StructureView> {
     let normalized = ext.trim_start_matches('.').to_ascii_lowercase();
     match normalized.as_str() {
         "xyz" => {
             let mut rd = Cursor::new(content.as_bytes());
             let inner = ccmat_babel::parse(&mut rd, "xyz")?;
-            let s = StructureView { inner, bonds: None };
+            let s = StructureView {
+                inner,
+                bonds: None,
+                chain_ids: None,
+                residues: None,
+            };
 
             Ok(s)
         }

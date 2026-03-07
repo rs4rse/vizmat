@@ -111,9 +111,12 @@ pub(super) fn parse_sdf_content(content: &str) -> Result<StructureView> {
         })
         .collect::<Vec<_>>();
     let mol = MoleculeBuilder::new().with_sites(sites).build_uncheck();
+    let bonds = if bond_count > 0 { Some(bonds) } else { None };
     let s = StructureView {
         inner: ccmat_core::Structure::Molecule(mol),
-        bonds: Some(bonds),
+        bonds,
+        chain_ids: None,
+        residues: None,
     };
 
     Ok(s)

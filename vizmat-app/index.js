@@ -1,14 +1,13 @@
-import init, { start } from "./vizmat_core.js";
-
-(async () => {
+(function () {
   const loader = document.getElementById("app-loader");
   const status = document.getElementById("loader-status");
   const canvas = document.getElementById("bevy-canvas");
-
   if (!loader) return;
 
   if (canvas) {
+    // Keep RMB free for in-app panning instead of opening browser context menu.
     canvas.addEventListener("contextmenu", (event) => event.preventDefault());
+    // Ensure keyboard/mouse interactions target the Bevy canvas after any click.
     canvas.addEventListener("mousedown", () => canvas.focus());
   }
 
@@ -17,19 +16,17 @@ import init, { start } from "./vizmat_core.js";
     window.setTimeout(() => loader.remove(), 260);
   };
 
-  // Initialize WASM module
-  try {
-    await init(); // This waits for WASM to load
-    start(); // start app
+  // Trunk injects a startup script and emits this event after WASM init.
+  // If the event fired before this listener was added, hide immediately.
+  if (window.wasmBindings) {
     hideLoader();
-  } catch (e) {
-    console.error("Failed to initialize WASM module:", e);
-    if (status) {
-      status.textContent = "Failed to load WASM module.";
-    }
+  } else {
+    window.addEventListener("TrunkApplicationStarted", hideLoader, {
+      once: true,
+    });
   }
 
-  // Fallback if WASM takes too long
+  // Fallback so users are not stuck forever if startup event never fires.
   window.setTimeout(() => {
     if (!loader.classList.contains("hidden") && status) {
       status.textContent = "Still loading... first run can take longer.";

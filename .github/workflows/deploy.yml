@@ -4,6 +4,9 @@ on:
   push:
     branches:
       - main
+  pull_request:
+    branches:
+      - main
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -16,6 +19,8 @@ jobs:
     steps:
       - name: Checkout repo
         uses: actions/checkout@v4
+        with:
+          submodules: recursive
 
       - uses: dtolnay/rust-toolchain@stable
         with:
@@ -26,7 +31,12 @@ jobs:
           curl https://drager.github.io/wasm-pack/installer/init.sh -sSf | bash
 
       - name: Build WASM
-        run: wasm-pack build --target web
+        run: |
+          if [ "${{ github.ref }}" = "refs/heads/main" ]; then
+            wasm-pack build --target web
+          else
+            wasm-pack build --target web --dev
+          fi
         working-directory: vizmat-core
 
       - uses: actions/setup-node@v6
@@ -37,11 +47,19 @@ jobs:
         run: |
           cp ../../wasm/* .
           cp ../../vizmat-app/index.html .
+          cp ../../vizmat-app/mobile-gesture.js .
+          cp ../../vizmat-app/style.css .
           npm install
           npm run build
         working-directory: vizmat-core/pkg
 
+      - name: Copy assets
+        run: |
+          cp -R ../../vizmat-app/assets/* ./dist/assets/
+        working-directory: vizmat-core/pkg
+
       - name: Deploy to gh-pages
+        if: github.ref == 'refs/heads/main' && github.event_name == 'push'
         uses: peaceiris/actions-gh-pages@v4
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}

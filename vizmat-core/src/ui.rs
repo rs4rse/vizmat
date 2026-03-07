@@ -1,21 +1,35 @@
 #![allow(clippy::needless_pass_by_value)]
 
 use std::collections::{BTreeSet, HashMap, HashSet, VecDeque};
+use std::path::PathBuf;
 
 use bevy::ecs::system::SystemParam;
+use bevy::input::keyboard::{Key, KeyboardInput};
 use bevy::input::mouse::{MouseMotion, MouseWheel};
+use bevy::input::ButtonState;
 use bevy::prelude::*;
 use bevy::render::camera::Viewport;
 use bevy::render::view::RenderLayers;
+use bevy::ui::FocusPolicy;
 use bevy::ui::RelativeCursorPosition;
+use crossbeam_channel::{Receiver, Sender};
+#[cfg(target_arch = "wasm32")]
+use {
+    crate::{get_web_theme, set_web_theme},
+    gloo::net::http::Request,
+    wasm_bindgen_futures::spawn_local,
+    web_sys::window,
+};
 
 use crate::constants::{get_element_color, get_element_size, get_residue_class_color};
-use crate::formats::{
-    parse_structure_by_extension, SUPPORTED_EXTENSIONS, SUPPORTED_EXTENSIONS_HELP,
-};
+#[allow(unused_imports)]
+use crate::formats::parse_structure_by_extension;
+#[cfg(not(target_arch = "wasm32"))]
+use crate::formats::SUPPORTED_EXTENSIONS;
+use crate::formats::SUPPORTED_EXTENSIONS_HELP;
 use crate::io::FileStatusKind;
 use crate::structure::{
-    resolve_bonds, AtomColorMode, AtomEntity, AtomIndex, BondEntity, BondInferenceSettings,
+    AtomColorMode, AtomEntity, AtomIndex, Bond, BondCache, BondEntity, BondInferenceSettings,
     BondOrder, Site, StructureView,
 };
 
@@ -23,6 +37,49 @@ const LAYER_GIZMO: RenderLayers = RenderLayers::layer(1);
 const LAYER_CANVAS: RenderLayers = RenderLayers::layer(0);
 const GIZMO_VIEWPORT_SIZE_PX: u32 = 200;
 const GIZMO_VIEWPORT_MARGIN_PX: u32 = 10;
+const DEFAULT_STRUCTURE_PATH: &str = "compounds/water.xyz";
+#[cfg(target_arch = "wasm32")]
+const DEFAULT_STRUCTURES_ASSET_BASE_URL: &str = "assets/structures";
+const DEFAULT_STRUCTURES_REMOTE_BASE_URL: &str =
+    "https://raw.githubusercontent.com/syzer/vizmat-structures/main";
+const EMBEDDED_STRUCTURE_LIST: &str = include_str!(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../vizmat-app/assets/structures/list.txt"
+));
+
+#[derive(States, Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub(crate) enum AppUiState {
+    #[default]
+    Startup,
+    Running,
+}
+
+#[derive(Component)]
+pub(crate) struct StartupScreenRoot;
+
+#[derive(Component)]
+pub(crate) struct HiddenOnStartup;
+
+#[derive(Component)]
+pub(crate) struct StartupTitleText;
+
+#[derive(Component)]
+pub(crate) struct StartupHelpText;
+
+#[derive(Component)]
+pub(crate) struct StartupSecondaryHelpText;
+
+#[derive(Component)]
+pub(crate) struct StartupIconText;
+
+#[derive(Component)]
+pub(crate) struct StartupDropzonePanel;
+
+#[derive(Component)]
+pub(crate) struct StartupDropzoneSegment;
+
+#[derive(Resource, Clone)]
+pub(crate) struct IconFont(pub(crate) Handle<Font>);
 
 #[derive(Component)]
 pub(crate) struct MainCamera;
@@ -54,6 +111,30 @@ pub(crate) struct ThemeToggleButton;
 pub(crate) struct ThemeToggleIcon;
 
 #[derive(Component)]
+pub(crate) struct StructurePickerToggleButton;
+
+#[derive(Component)]
+pub(crate) struct StructurePickerPanel;
+
+#[derive(Component)]
+pub(crate) struct StructurePickerQueryText;
+
+#[derive(Component)]
+pub(crate) struct StructurePickerResultsRoot;
+
+#[derive(Component, Clone)]
+pub(crate) struct StructurePickerResultButton {
+    pub(crate) path: String,
+}
+
+#[derive(Resource, Default)]
+pub(crate) struct StructurePickerState {
+    pub(crate) entries: Vec<String>,
+    pub(crate) query: String,
+    pub(crate) visible: bool,
+}
+
+#[derive(Component)]
 pub(crate) struct HudTopBar;
 
 #[derive(Component)]
@@ -70,6 +151,50 @@ pub(crate) struct HudHelpText;
 
 #[derive(Component)]
 pub(crate) struct HudLegendText;
+
+#[derive(Component)]
+pub(crate) struct StructureLoadingOverlay;
+
+#[derive(Component)]
+pub(crate) struct StructureLoadingTitle;
+
+#[derive(Component)]
+pub(crate) struct StructureLoadingTelemetry;
+
+#[derive(Component)]
+pub(crate) struct StructureLoadingProgressFill;
+
+#[derive(Debug)]
+pub(crate) struct CatalogLoadResult {
+    pub(crate) path: String,
+    pub(crate) source: String,
+    pub(crate) contents: Result<String, String>,
+}
+
+#[derive(Resource, Clone)]
+pub(crate) struct CatalogLoadChannel {
+    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
+    sender: Sender<CatalogLoadResult>,
+    receiver: Receiver<CatalogLoadResult>,
+}
+
+impl Default for CatalogLoadChannel {
+    fn default() -> Self {
+        let (sender, receiver) = crossbeam_channel::unbounded();
+        Self { sender, receiver }
+    }
+}
+
+impl CatalogLoadChannel {
+    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
+    pub(crate) fn send(&self, result: CatalogLoadResult) {
+        let _ = self.sender.send(result);
+    }
+
+    pub(crate) fn try_recv(&self) -> Option<CatalogLoadResult> {
+        self.receiver.try_recv().ok()
+    }
+}
 
 #[derive(Component)]
 pub(crate) struct BondToleranceSliderTrack;
@@ -442,6 +567,7 @@ fn count_unique_non_empty(values: impl Iterator<Item = Option<String>>) -> usize
 fn compute_available_color_modes(
     sv: Option<&StructureView>,
     bond_settings: &BondInferenceSettings,
+    bond_cache: &mut BondCache,
 ) -> Vec<AtomColorMode> {
     let mut modes = vec![AtomColorMode::Element];
     let Some(sv) = sv else {
@@ -459,22 +585,22 @@ fn compute_available_color_modes(
         modes.push(AtomColorMode::Residue);
     }
 
-    let (bonds, _) = resolve_bonds(sv, bond_settings);
+    let bonds = bonds_for_color(sv, bond_settings, bond_cache);
     if !bonds.is_empty() {
-        let ring_atoms = compute_ring_atoms(sites.len(), &bonds);
+        let ring_atoms = compute_ring_atoms(sites.len(), bonds);
         let ring_count = ring_atoms.iter().filter(|&&v| v).count();
         if ring_count > 0 && ring_count < sites.len() {
             modes.push(AtomColorMode::Ring);
         }
 
-        let bond_env_atoms = compute_bond_env_atoms(sites.len(), &bonds);
+        let bond_env_atoms = compute_bond_env_atoms(sites.len(), bonds);
         let env_count = bond_env_atoms.iter().filter(|&&v| v).count();
         if env_count > 0 && env_count < sites.len() {
             modes.push(AtomColorMode::BondEnv);
         }
 
         let functional_groups =
-            compute_functional_groups(&sites, &bonds, &ring_atoms, &bond_env_atoms);
+            compute_functional_groups(&sites, bonds, &ring_atoms, &bond_env_atoms);
         let unique_groups = functional_groups.iter().copied().collect::<HashSet<_>>();
         if unique_groups.len() > 1 {
             modes.push(AtomColorMode::Functional);
@@ -484,9 +610,29 @@ fn compute_available_color_modes(
     modes
 }
 
+fn bonds_for_color<'a>(
+    sv: &'a StructureView,
+    bond_settings: &BondInferenceSettings,
+    bond_cache: &'a mut BondCache,
+) -> &'a [Bond] {
+    static EMPTY_BONDS: [Bond; 0] = [];
+
+    if bond_settings.enabled {
+        let (bonds, _) = bond_cache.resolve_bonds_cached(sv, bond_settings);
+        return bonds;
+    }
+
+    sv.bonds
+        .as_ref()
+        .filter(|b| !b.is_empty())
+        .map(|b| b.as_slice())
+        .unwrap_or(&EMPTY_BONDS)
+}
+
 pub(crate) fn update_atom_hover_cache(
     sv: Option<Res<StructureView>>,
     bond_settings: Res<BondInferenceSettings>,
+    mut bond_cache: ResMut<BondCache>,
     mut cache: ResMut<AtomHoverCache>,
 ) {
     let Some(sv) = sv else {
@@ -494,14 +640,15 @@ pub(crate) fn update_atom_hover_cache(
         cache.ring_atoms.clear();
         return;
     };
+    let nsites = sv.nsites();
 
     if !sv.is_changed() && !bond_settings.is_changed() {
         return;
     }
 
-    let (bonds, _) = resolve_bonds(&sv, &bond_settings);
-    cache.degree = compute_atom_degree(sv.nsites(), &bonds);
-    cache.ring_atoms = compute_ring_atoms(sv.nsites(), &bonds);
+    let bonds = bonds_for_color(&sv, &bond_settings, &mut bond_cache);
+    cache.degree = compute_atom_degree(nsites, bonds);
+    cache.ring_atoms = compute_ring_atoms(nsites, bonds);
 }
 
 fn pick_atom_under_cursor(
@@ -650,14 +797,429 @@ type MainCameraChangedTransformQuery<'w, 's> = Query<
     (With<MainCamera>, Without<GizmoAxisRoot>, Changed<Transform>),
 >;
 
+type StartupThemeTextQueries<'w, 's> = (
+    Query<'w, 's, &'static mut TextColor, With<StartupTitleText>>,
+    Query<'w, 's, &'static mut TextColor, With<StartupHelpText>>,
+    Query<'w, 's, &'static mut TextColor, With<StartupSecondaryHelpText>>,
+    Query<'w, 's, &'static mut TextColor, With<StartupIconText>>,
+    Query<'w, 's, &'static mut BackgroundColor, With<StartupDropzonePanel>>,
+    Query<'w, 's, &'static mut BackgroundColor, With<StartupDropzoneSegment>>,
+);
+
+type StructureLoadingTextQueries<'w, 's> = (
+    Query<'w, 's, &'static mut Text, With<StructureLoadingTitle>>,
+    Query<'w, 's, &'static mut Text, With<StructureLoadingTelemetry>>,
+);
+
+type StructureLoadingNodeQueries<'w, 's> = (
+    Query<'w, 's, &'static mut Node, With<StructureLoadingOverlay>>,
+    Query<'w, 's, &'static mut Node, With<StructureLoadingProgressFill>>,
+);
+
+fn parse_embedded_structure_entries() -> Vec<String> {
+    EMBEDDED_STRUCTURE_LIST
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty() && !line.starts_with('#'))
+        .map(ToOwned::to_owned)
+        .collect()
+}
+
+fn structure_matches_query(path: &str, query: &str) -> bool {
+    if query.trim().is_empty() {
+        return true;
+    }
+    path.to_ascii_lowercase()
+        .contains(&query.trim().to_ascii_lowercase())
+}
+
+fn filtered_structure_entries(state: &StructurePickerState) -> Vec<String> {
+    state
+        .entries
+        .iter()
+        .filter(|entry| structure_matches_query(entry, &state.query))
+        .take(12)
+        .cloned()
+        .collect()
+}
+
+#[cfg_attr(target_arch = "wasm32", allow(dead_code))]
+fn structures_local_dir() -> &'static str {
+    option_env!("VIZMAT_STRUCTURES_LOCAL_DIR").unwrap_or(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../vizmat-app/assets/structures"
+    ))
+}
+
+#[cfg(target_arch = "wasm32")]
+fn structures_asset_base_url() -> &'static str {
+    option_env!("VIZMAT_STRUCTURES_ASSET_BASE_URL").unwrap_or(DEFAULT_STRUCTURES_ASSET_BASE_URL)
+}
+
+fn structures_remote_base_url() -> &'static str {
+    option_env!("VIZMAT_STRUCTURES_REMOTE_BASE_URL").unwrap_or(DEFAULT_STRUCTURES_REMOTE_BASE_URL)
+}
+
+fn structure_remote_url(path: &str) -> String {
+    format!("{}/{}", structures_remote_base_url(), path)
+}
+
+fn looks_like_html_response(contents: &str) -> bool {
+    let trimmed = contents.trim_start();
+    let prefix: String = trimmed.chars().take(256).collect();
+    let prefix_lower = prefix.to_ascii_lowercase();
+    prefix_lower.starts_with("<!doctype")
+        || prefix_lower.starts_with("<html")
+        || prefix_lower.starts_with("<head")
+        || prefix_lower.starts_with("<body")
+}
+
+#[cfg(target_arch = "wasm32")]
+fn structure_local_asset_url(path: &str) -> String {
+    format!("{}/{}", structures_asset_base_url(), path)
+}
+
+#[cfg_attr(target_arch = "wasm32", allow(dead_code))]
+fn structure_local_asset_path(path: &str) -> PathBuf {
+    PathBuf::from(structures_local_dir()).join(path)
+}
+
+fn set_catalog_loaded_status(path: &str, atom_count: usize, file_bond_count: usize) -> String {
+    let name = path.rsplit('/').next().unwrap_or(path);
+    if file_bond_count > 0 {
+        format!("Loaded: {name} ({atom_count} atoms, {file_bond_count} file bonds)")
+    } else {
+        format!("Loaded: {name} ({atom_count} atoms)")
+    }
+}
+
+fn parse_and_store_catalog_structure(
+    path: &str,
+    contents: &str,
+    source: &str,
+    file_drag_drop: &mut crate::io::FileDragDrop,
+) -> bool {
+    let ext = path
+        .rsplit('.')
+        .next()
+        .map(str::to_ascii_lowercase)
+        .unwrap_or_default();
+    match parse_structure_by_extension(&ext, contents) {
+        Ok(sv) => {
+            let atom_count = sv.nsites();
+            let file_bond_count = sv.bonds.as_ref().map_or(0, Vec::len);
+            file_drag_drop.loaded_structure = Some(sv);
+            file_drag_drop.status_message =
+                set_catalog_loaded_status(path, atom_count, file_bond_count);
+            file_drag_drop.status_kind = FileStatusKind::Success;
+            info!(
+                "Structure picker: loaded '{path}' from {source} with {atom_count} atoms and {file_bond_count} file bonds"
+            );
+            true
+        }
+        Err(err) => {
+            warn!("Structure picker: parse error for '{path}' from {source}: {err}");
+            file_drag_drop.status_message = format!("Parse error: {err}");
+            file_drag_drop.status_kind = FileStatusKind::Error;
+            false
+        }
+    }
+}
+
+pub(crate) fn setup_startup_screen(
+    mut commands: Commands,
+    icon_font: Res<IconFont>,
+    theme: Res<UiTheme>,
+) {
+    let p = theme_palette(theme.mode);
+    commands
+        .spawn((
+            Node {
+                width: Val::Percent(100.0),
+                height: Val::Percent(100.0),
+                padding: UiRect::axes(Val::Px(24.0), Val::Px(24.0)),
+                align_items: AlignItems::Center,
+                justify_content: JustifyContent::Center,
+                ..default()
+            },
+            GlobalZIndex(-10),
+            FocusPolicy::Pass,
+            BackgroundColor(Color::NONE),
+            StartupScreenRoot,
+        ))
+        .with_children(|root| {
+            root.spawn((
+                Node {
+                    flex_direction: FlexDirection::Column,
+                    align_items: AlignItems::Center,
+                    row_gap: Val::Px(10.0),
+                    ..default()
+                },
+                BackgroundColor(Color::NONE),
+            ))
+            .with_children(|content| {
+                content.spawn((
+                    Text::new("VIZMAT"),
+                    TextFont {
+                        font_size: 50.0,
+                        ..default()
+                    },
+                    TextLayout::new_with_justify(JustifyText::Center),
+                    TextColor(p.text),
+                    StartupTitleText,
+                ));
+                content
+                    .spawn((
+                        Node {
+                            width: Val::Percent(88.0),
+                            min_width: Val::Px(260.0),
+                            max_width: Val::Px(620.0),
+                            padding: UiRect::all(Val::Px(22.0)),
+                            flex_direction: FlexDirection::Column,
+                            align_items: AlignItems::Center,
+                            justify_content: JustifyContent::Center,
+                            row_gap: Val::Px(12.0),
+                            position_type: PositionType::Relative,
+                            ..default()
+                        },
+                        BackgroundColor(p.bar_bg_alt),
+                        StartupDropzonePanel,
+                    ))
+                    .with_children(|dropzone| {
+                        dropzone
+                            .spawn((
+                                Node {
+                                    position_type: PositionType::Absolute,
+                                    top: Val::Px(0.0),
+                                    left: Val::Px(14.0),
+                                    right: Val::Px(14.0),
+                                    height: Val::Px(2.0),
+                                    column_gap: Val::Px(8.0),
+                                    ..default()
+                                },
+                                BackgroundColor(Color::NONE),
+                            ))
+                            .with_children(|edge| {
+                                for _ in 0..8 {
+                                    edge.spawn((
+                                        Node {
+                                            flex_grow: 1.0,
+                                            height: Val::Px(2.0),
+                                            ..default()
+                                        },
+                                        BackgroundColor(p.border),
+                                        StartupDropzoneSegment,
+                                    ));
+                                }
+                            });
+
+                        dropzone
+                            .spawn((
+                                Node {
+                                    position_type: PositionType::Absolute,
+                                    bottom: Val::Px(0.0),
+                                    left: Val::Px(14.0),
+                                    right: Val::Px(14.0),
+                                    height: Val::Px(2.0),
+                                    column_gap: Val::Px(8.0),
+                                    ..default()
+                                },
+                                BackgroundColor(Color::NONE),
+                            ))
+                            .with_children(|edge| {
+                                for _ in 0..8 {
+                                    edge.spawn((
+                                        Node {
+                                            flex_grow: 1.0,
+                                            height: Val::Px(2.0),
+                                            ..default()
+                                        },
+                                        BackgroundColor(p.border),
+                                        StartupDropzoneSegment,
+                                    ));
+                                }
+                            });
+
+                        dropzone
+                            .spawn((
+                                Node {
+                                    position_type: PositionType::Absolute,
+                                    top: Val::Px(14.0),
+                                    bottom: Val::Px(14.0),
+                                    left: Val::Px(0.0),
+                                    width: Val::Px(2.0),
+                                    flex_direction: FlexDirection::Column,
+                                    row_gap: Val::Px(8.0),
+                                    ..default()
+                                },
+                                BackgroundColor(Color::NONE),
+                            ))
+                            .with_children(|edge| {
+                                for _ in 0..5 {
+                                    edge.spawn((
+                                        Node {
+                                            flex_grow: 1.0,
+                                            width: Val::Px(2.0),
+                                            ..default()
+                                        },
+                                        BackgroundColor(p.border),
+                                        StartupDropzoneSegment,
+                                    ));
+                                }
+                            });
+
+                        dropzone
+                            .spawn((
+                                Node {
+                                    position_type: PositionType::Absolute,
+                                    top: Val::Px(14.0),
+                                    bottom: Val::Px(14.0),
+                                    right: Val::Px(0.0),
+                                    width: Val::Px(2.0),
+                                    flex_direction: FlexDirection::Column,
+                                    row_gap: Val::Px(8.0),
+                                    ..default()
+                                },
+                                BackgroundColor(Color::NONE),
+                            ))
+                            .with_children(|edge| {
+                                for _ in 0..5 {
+                                    edge.spawn((
+                                        Node {
+                                            flex_grow: 1.0,
+                                            width: Val::Px(2.0),
+                                            ..default()
+                                        },
+                                        BackgroundColor(p.border),
+                                        StartupDropzoneSegment,
+                                    ));
+                                }
+                            });
+
+                        dropzone.spawn((
+                            Text::new("\u{f063}\n\u{f49e}"),
+                            TextFont {
+                                font: icon_font.0.clone(),
+                                font_size: 38.0,
+                                ..default()
+                            },
+                            TextLayout::new_with_justify(JustifyText::Center),
+                            TextColor(p.text_muted),
+                            StartupIconText,
+                        ));
+                        dropzone.spawn((
+                            Text::new("Drag and drop a file"),
+                            TextFont {
+                                font_size: 23.0,
+                                ..default()
+                            },
+                            TextLayout::new_with_justify(JustifyText::Center),
+                            TextColor(p.text),
+                            StartupHelpText,
+                        ));
+                    });
+                content.spawn((
+                    Text::new("or click Load Structure"),
+                    TextFont {
+                        font_size: 16.0,
+                        ..default()
+                    },
+                    TextLayout::new_with_justify(JustifyText::Center),
+                    TextColor(p.text_muted),
+                    StartupSecondaryHelpText,
+                ));
+            });
+        });
+}
+
+pub(crate) fn cleanup_startup_screen(
+    mut commands: Commands,
+    startup_query: Query<Entity, With<StartupScreenRoot>>,
+) {
+    for entity in &startup_query {
+        commands.entity(entity).despawn();
+    }
+}
+
+pub(crate) fn hide_non_startup_controls(mut controls: Query<&mut Node, With<HiddenOnStartup>>) {
+    for mut node in &mut controls {
+        node.display = Display::None;
+    }
+}
+
+pub(crate) fn show_non_startup_controls(mut controls: Query<&mut Node, With<HiddenOnStartup>>) {
+    for mut node in &mut controls {
+        node.display = Display::Flex;
+    }
+}
+
+pub(crate) fn transition_to_running_on_structure_loaded(
+    sv: Option<Res<StructureView>>,
+    file_drag_drop: Res<crate::io::FileDragDrop>,
+    mut next_ui_state: ResMut<NextState<AppUiState>>,
+) {
+    if sv.is_some() || file_drag_drop.loaded_structure.is_some() {
+        next_ui_state.set(AppUiState::Running);
+    }
+}
+
 // System to set up file upload UI
-pub(crate) fn setup_file_ui(mut commands: Commands, asset_server: Res<AssetServer>) {
-    commands.insert_resource(UiTheme::default());
+pub(crate) fn setup_file_ui(mut commands: Commands, mut font_assets: ResMut<Assets<Font>>) {
+    #[cfg(target_arch = "wasm32")]
+    let mut theme = UiTheme::default();
+    #[cfg(not(target_arch = "wasm32"))]
+    let theme = UiTheme::default();
+    #[cfg(target_arch = "wasm32")]
+    {
+        let web_theme = get_web_theme().unwrap_or_default();
+        if web_theme.eq_ignore_ascii_case("light") {
+            theme.mode = ThemeMode::Light;
+        } else if web_theme.eq_ignore_ascii_case("dark") {
+            theme.mode = ThemeMode::Dark;
+        }
+    }
+    commands.insert_resource(theme);
     commands.insert_resource(ColorModeAvailability::default());
     commands.insert_resource(AtomHoverCache::default());
     commands.insert_resource(SelectedAtom::default());
-    let p = theme_palette(ThemeMode::Dark);
-    let icon_font: Handle<Font> = asset_server.load("fonts/fa-solid-900.ttf");
+    commands.insert_resource(StructurePickerState {
+        entries: parse_embedded_structure_entries(),
+        query: String::new(),
+        visible: false,
+    });
+    let p = theme_palette(theme.mode);
+    let is_mobile = {
+        #[cfg(target_arch = "wasm32")]
+        let is_mobile = window()
+            .and_then(|window| window.navigator().user_agent().ok())
+            .is_some_and(|ua| {
+                let ua = ua.to_lowercase();
+                ua.contains("mobile") || ua.contains("android") || ua.contains("iphone")
+            });
+
+        #[cfg(not(target_arch = "wasm32"))]
+        let is_mobile = false;
+
+        is_mobile
+    };
+
+    let controls_hint = if is_mobile {
+        "Touch: one-finger: rotate, two-finger: pan, pinch: zoom"
+    } else {
+        "Doom-like: W/A/S/D move  Shift sprint  Q/E rotate  LMB rotate  RMB pan  Wheel zoom"
+    };
+
+    let icon_font: Handle<Font> = font_assets.add(
+        Font::try_from_bytes(
+            include_bytes!(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/../vizmat-app/assets/fonts/fa-solid-900.ttf"
+            ))
+            .to_vec(),
+        )
+        .expect("embedded Font Awesome TTF must be valid"),
+    );
+    commands.insert_resource(IconFont(icon_font.clone()));
     commands.insert_resource(ClearColor(p.scene_bg));
 
     commands
@@ -695,12 +1257,12 @@ pub(crate) fn setup_file_ui(mut commands: Commands, asset_server: Res<AssetServe
                     },
                     BorderColor(p.border),
                     BackgroundColor(p.button_bg),
-                    OpenFileButton,
+                    StructurePickerToggleButton,
                     HudButton,
                 ))
                 .with_children(|button| {
                     button.spawn((
-                        Text::new("Open File"),
+                        Text::new("Load Structure"),
                         TextFont {
                             font: default(),
                             font_size: 12.0,
@@ -718,34 +1280,11 @@ pub(crate) fn setup_file_ui(mut commands: Commands, asset_server: Res<AssetServe
                         border: UiRect::all(Val::Px(1.0)),
                         ..default()
                     },
-                    BorderColor(p.border),
-                    BackgroundColor(p.button_bg),
-                    LoadDefaultButton,
-                    HudButton,
-                ))
-                .with_children(|button| {
-                    button.spawn((
-                        Text::new("Load Default"),
-                        TextFont {
-                            font: default(),
-                            font_size: 12.0,
-                            ..default()
-                        },
-                        TextColor(p.text),
-                        HudButtonLabel,
-                    ));
-                });
-
-                row.spawn((
-                    Button,
-                    Node {
-                        padding: UiRect::axes(Val::Px(10.0), Val::Px(6.0)),
-                        border: UiRect::all(Val::Px(1.0)),
-                        ..default()
-                    },
+                    Visibility::Visible,
                     BorderColor(p.border),
                     BackgroundColor(p.button_bg),
                     ColorModeButton,
+                    HiddenOnStartup,
                     HudButton,
                 ))
                 .with_children(|button| {
@@ -768,9 +1307,11 @@ pub(crate) fn setup_file_ui(mut commands: Commands, asset_server: Res<AssetServe
                         border: UiRect::all(Val::Px(1.0)),
                         ..default()
                     },
+                    Visibility::Visible,
                     BorderColor(p.border),
                     BackgroundColor(p.button_bg),
                     ResetCameraButton,
+                    HiddenOnStartup,
                     HudButton,
                 ))
                 .with_children(|button| {
@@ -793,9 +1334,11 @@ pub(crate) fn setup_file_ui(mut commands: Commands, asset_server: Res<AssetServe
                         border: UiRect::all(Val::Px(1.0)),
                         ..default()
                     },
+                    Visibility::Visible,
                     BorderColor(p.border),
                     BackgroundColor(p.button_bg),
                     LightAttachmentButton { attached: false },
+                    HiddenOnStartup,
                     HudButton,
                 ))
                 .with_children(|button| {
@@ -818,9 +1361,11 @@ pub(crate) fn setup_file_ui(mut commands: Commands, asset_server: Res<AssetServe
                         border: UiRect::all(Val::Px(1.0)),
                         ..default()
                     },
+                    Visibility::Visible,
                     BorderColor(p.border),
                     BackgroundColor(p.button_bg),
                     BondToggleButton,
+                    HiddenOnStartup,
                     HudButton,
                 ))
                 .with_children(|button| {
@@ -846,10 +1391,12 @@ pub(crate) fn setup_file_ui(mut commands: Commands, asset_server: Res<AssetServe
                         align_items: AlignItems::Stretch,
                         ..default()
                     },
+                    Visibility::Visible,
                     BorderColor(p.border),
                     BackgroundColor(Color::srgba(0.5, 0.5, 0.5, 0.15)),
                     RelativeCursorPosition::default(),
                     BondToleranceSliderTrack,
+                    HiddenOnStartup,
                 ))
                 .with_children(|track| {
                     track.spawn((
@@ -869,9 +1416,11 @@ pub(crate) fn setup_file_ui(mut commands: Commands, asset_server: Res<AssetServe
                         font_size: 12.0,
                         ..default()
                     },
+                    Visibility::Visible,
                     TextColor(p.text),
                     HudButtonLabel,
                     BondToleranceText,
+                    HiddenOnStartup,
                 ));
             });
 
@@ -890,8 +1439,10 @@ pub(crate) fn setup_file_ui(mut commands: Commands, asset_server: Res<AssetServe
                         font_size: 12.0,
                         ..default()
                     },
+                    Visibility::Visible,
                     TextColor(p.text),
                     FileUploadText,
+                    HiddenOnStartup,
                 ));
 
                 right
@@ -913,7 +1464,7 @@ pub(crate) fn setup_file_ui(mut commands: Commands, asset_server: Res<AssetServe
                     ))
                     .with_children(|button| {
                         button.spawn((
-                            Text::new("\u{f186}"),
+                            Text::new("\u{23FE}"),
                             TextFont {
                                 font: icon_font.clone(),
                                 font_size: 16.0,
@@ -925,6 +1476,134 @@ pub(crate) fn setup_file_ui(mut commands: Commands, asset_server: Res<AssetServe
                         ));
                     });
             });
+        });
+
+    commands
+        .spawn((
+            Node {
+                position_type: PositionType::Absolute,
+                top: Val::Px(0.0),
+                left: Val::Px(0.0),
+                right: Val::Px(0.0),
+                bottom: Val::Px(0.0),
+                display: Display::None,
+                justify_content: JustifyContent::Center,
+                align_items: AlignItems::Center,
+                ..default()
+            },
+            GlobalZIndex(20),
+            FocusPolicy::Pass,
+            BackgroundColor(Color::NONE),
+            StructureLoadingOverlay,
+        ))
+        .with_children(|overlay| {
+            overlay
+                .spawn((
+                    Node {
+                        flex_direction: FlexDirection::Column,
+                        align_items: AlignItems::Center,
+                        row_gap: Val::Px(10.0),
+                        padding: UiRect::all(Val::Px(14.0)),
+                        border: UiRect::all(Val::Px(1.0)),
+                        ..default()
+                    },
+                    BorderColor(p.border),
+                    BackgroundColor(p.bar_bg_alt),
+                ))
+                .with_children(|panel| {
+                    panel.spawn((
+                        Text::new("Calibrating molecule..."),
+                        TextFont {
+                            font_size: 16.0,
+                            ..default()
+                        },
+                        TextColor(p.text),
+                        StructureLoadingTitle,
+                    ));
+                    panel
+                        .spawn((
+                            Node {
+                                width: Val::Px(240.0),
+                                height: Val::Px(6.0),
+                                border: UiRect::all(Val::Px(1.0)),
+                                justify_content: JustifyContent::FlexStart,
+                                align_items: AlignItems::Stretch,
+                                ..default()
+                            },
+                            BorderColor(p.border),
+                            BackgroundColor(Color::srgba(0.5, 0.5, 0.5, 0.18)),
+                        ))
+                        .with_children(|track| {
+                            track.spawn((
+                                Node {
+                                    width: Val::Percent(35.0),
+                                    height: Val::Percent(100.0),
+                                    ..default()
+                                },
+                                BackgroundColor(p.slider_fill),
+                                StructureLoadingProgressFill,
+                            ));
+                        });
+                    panel.spawn((
+                        Text::new("Fetching structure..."),
+                        TextFont {
+                            font_size: 12.0,
+                            ..default()
+                        },
+                        TextColor(p.text_muted),
+                        StructureLoadingTelemetry,
+                    ));
+                });
+        });
+
+    commands
+        .spawn((
+            Node {
+                position_type: PositionType::Absolute,
+                top: Val::Px(54.0),
+                left: Val::Px(10.0),
+                width: Val::Px(360.0),
+                max_height: Val::Px(320.0),
+                display: Display::None,
+                flex_direction: FlexDirection::Column,
+                row_gap: Val::Px(6.0),
+                padding: UiRect::all(Val::Px(8.0)),
+                border: UiRect::all(Val::Px(1.0)),
+                ..default()
+            },
+            BorderColor(p.border),
+            BackgroundColor(p.bar_bg_alt),
+            StructurePickerPanel,
+        ))
+        .with_children(|panel| {
+            panel.spawn((
+                Text::new("Search structures:"),
+                TextFont {
+                    font_size: 11.0,
+                    ..default()
+                },
+                TextColor(p.text_muted),
+                HudHelpText,
+            ));
+            panel.spawn((
+                Text::new(""),
+                TextFont {
+                    font_size: 12.0,
+                    ..default()
+                },
+                TextColor(p.text),
+                StructurePickerQueryText,
+            ));
+            panel.spawn((
+                Node {
+                    flex_direction: FlexDirection::Column,
+                    row_gap: Val::Px(4.0),
+                    overflow: Overflow::clip_y(),
+                    ..default()
+                },
+                BackgroundColor(Color::NONE),
+                StructurePickerResultsRoot,
+            ));
         });
 
     commands
@@ -945,9 +1624,7 @@ pub(crate) fn setup_file_ui(mut commands: Commands, asset_server: Res<AssetServe
         ))
         .with_children(|bar| {
             bar.spawn((
-                Text::new(
-                    "Doom-like: W/A/S/D move  Shift sprint  Q/E rotate  LMB rotate  RMB pan  Wheel zoom",
-                ),
+                Text::new(controls_hint),
                 TextFont {
                     font_size: 11.0,
                     ..default()
@@ -1015,18 +1692,110 @@ pub(crate) fn setup_file_ui(mut commands: Commands, asset_server: Res<AssetServe
 }
 
 // System to update file upload UI
+fn status_message_for_hud(status: &str, kind: FileStatusKind) -> String {
+    match kind {
+        FileStatusKind::Info => {
+            if status.starts_with("Loading:") {
+                "Loading structure...".to_string()
+            } else {
+                status.to_string()
+            }
+        }
+        FileStatusKind::Success => status.to_string(),
+        FileStatusKind::Error => {
+            if status.starts_with("Load error") {
+                "Could not load structure from remote library. Check connection and try again."
+                    .to_string()
+            } else if status.starts_with("Read error:") {
+                "Could not read structure source. Check path or network and try again.".to_string()
+            } else if status.starts_with("Parse error:") {
+                "Could not parse that structure file. Try a different file.".to_string()
+            } else if status.starts_with("Unsupported file.") {
+                format!("Unsupported file. Use {}.", SUPPORTED_EXTENSIONS_HELP)
+            } else {
+                "Load failed. Try again with another structure.".to_string()
+            }
+        }
+    }
+}
+
 pub(crate) fn update_file_ui(
     file_drag_drop: Res<crate::io::FileDragDrop>,
     theme: Res<UiTheme>,
     mut text_query: Query<(&mut Text, &mut TextColor), With<FileUploadText>>,
 ) {
     if let Ok((mut text, mut color)) = text_query.single_mut() {
-        **text = file_drag_drop.status_message.clone();
+        **text = status_message_for_hud(&file_drag_drop.status_message, file_drag_drop.status_kind);
         *color = match file_drag_drop.status_kind {
             FileStatusKind::Info => TextColor(theme_palette(theme.mode).text),
             FileStatusKind::Success => TextColor(Color::srgb(0.20, 0.72, 0.34)),
             FileStatusKind::Error => TextColor(Color::srgb(0.90, 0.20, 0.22)),
         };
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn update_structure_loading_overlay(
+    file_drag_drop: Res<crate::io::FileDragDrop>,
+    time: Res<Time>,
+    _theme: Res<UiTheme>,
+    mut node_queries: ParamSet<StructureLoadingNodeQueries<'_, '_>>,
+    mut text_queries: ParamSet<StructureLoadingTextQueries<'_, '_>>,
+) {
+    let status = file_drag_drop.status_message.as_str();
+    let is_visible = status.starts_with("Loading:");
+    let mut overlay_query = node_queries.p0();
+    let Ok(mut overlay) = overlay_query.single_mut() else {
+        return;
+    };
+    overlay.display = if is_visible {
+        Display::Flex
+    } else {
+        Display::None
+    };
+    if !is_visible {
+        return;
+    }
+
+    for mut text in &mut text_queries.p0() {
+        text.0 = "Calibrating molecule...".to_string();
+    }
+    for mut text in &mut text_queries.p1() {
+        text.0 = "Fetching structure...".to_string();
+    }
+    let mut fill_query = node_queries.p1();
+    if let Ok(mut fill) = fill_query.single_mut() {
+        let phase = (time.elapsed_secs() * 1.4).sin() * 0.5 + 0.5;
+        let width = 25.0 + phase * 55.0;
+        fill.width = Val::Percent(width);
+    }
+}
+
+pub(crate) fn handle_catalog_load_results(
+    mut file_drag_drop: ResMut<crate::io::FileDragDrop>,
+    catalog_channel: Option<Res<CatalogLoadChannel>>,
+) {
+    let Some(channel) = catalog_channel else {
+        return;
+    };
+    while let Some(result) = channel.try_recv() {
+        match result.contents {
+            Ok(contents) => {
+                if parse_and_store_catalog_structure(
+                    &result.path,
+                    &contents,
+                    &result.source,
+                    &mut file_drag_drop,
+                ) {
+                    file_drag_drop.dragged_file = None;
+                }
+            }
+            Err(err) => {
+                let name = result.path.rsplit('/').next().unwrap_or(&result.path);
+                file_drag_drop.status_message = format!("Load error ({name}): {err}");
+                file_drag_drop.status_kind = FileStatusKind::Error;
+            }
+        }
     }
 }
 
@@ -1042,6 +1811,7 @@ pub(crate) fn bond_tolerance_controls(
     mut text_queries: ParamSet<(
         Query<&mut Text, With<BondToleranceText>>,
         Query<&mut Text, With<BondToggleLabel>>,
+        Query<&mut Visibility, With<BondToleranceText>>,
     )>,
     mut node_queries: ParamSet<(
         Query<&mut Node, With<BondToleranceSliderTrack>>,
@@ -1089,11 +1859,12 @@ pub(crate) fn bond_tolerance_controls(
         }
     }
 
+    let show_tolerance_controls = settings.enabled && !using_file_bonds;
     if let Ok(mut slider_track) = node_queries.p0().single_mut() {
-        slider_track.display = if using_file_bonds {
-            Display::None
-        } else {
+        slider_track.display = if show_tolerance_controls {
             Display::Flex
+        } else {
+            Display::None
         };
     }
     if let Ok(mut text) = text_queries.p0().single_mut() {
@@ -1101,6 +1872,13 @@ pub(crate) fn bond_tolerance_controls(
             "File".into()
         } else {
             format!("{:.2}", settings.ui_tolerance_scale)
+        };
+    }
+    if let Ok(mut value_visibility) = text_queries.p2().single_mut() {
+        *value_visibility = if show_tolerance_controls {
+            Visibility::Visible
+        } else {
+            Visibility::Hidden
         };
     }
     if let Ok(mut text) = text_queries.p1().single_mut() {
@@ -1146,12 +1924,20 @@ pub(crate) fn toggle_theme_button(
                     ThemeMode::Dark => ThemeMode::Light,
                     ThemeMode::Light => ThemeMode::Dark,
                 };
+                #[cfg(target_arch = "wasm32")]
+                {
+                    let web_theme = match theme.mode {
+                        ThemeMode::Dark => "dark",
+                        ThemeMode::Light => "light",
+                    };
+                    set_web_theme(web_theme);
+                }
                 *color = BackgroundColor(themed_button_bg(theme.mode, Interaction::Pressed));
                 for child in children.iter() {
                     if let Ok(mut text) = texts.get_mut(child) {
                         text.0 = match theme.mode {
-                            ThemeMode::Dark => "\u{f186}".into(),
-                            ThemeMode::Light => "\u{f185}".into(),
+                            ThemeMode::Dark => "\u{23FE}".into(),
+                            ThemeMode::Light => "\u{2600}".into(),
                         };
                     }
                 }
@@ -1191,11 +1977,12 @@ pub(crate) fn color_mode_button(
 pub(crate) fn update_color_mode_availability(
     sv: Option<Res<StructureView>>,
     bond_settings: Res<BondInferenceSettings>,
+    mut bond_cache: ResMut<BondCache>,
     mut mode: ResMut<AtomColorMode>,
     mut availability: ResMut<ColorModeAvailability>,
 ) {
     // XXX: should this system called every frame?
-    let next_modes = compute_available_color_modes(sv.as_deref(), &bond_settings);
+    let next_modes = compute_available_color_modes(sv.as_deref(), &bond_settings, &mut bond_cache);
     if availability.modes != next_modes {
         availability.modes = next_modes;
     }
@@ -1274,6 +2061,34 @@ pub(crate) fn apply_theme_to_hud(
     }
 }
 
+pub(crate) fn apply_theme_to_startup_screen(
+    theme: Res<UiTheme>,
+    mut startup_text_queries: ParamSet<StartupThemeTextQueries<'_, '_>>,
+) {
+    if !theme.is_changed() {
+        return;
+    }
+    let p = theme_palette(theme.mode);
+    for mut color in &mut startup_text_queries.p0() {
+        *color = TextColor(p.text);
+    }
+    for mut color in &mut startup_text_queries.p1() {
+        *color = TextColor(p.text);
+    }
+    for mut color in &mut startup_text_queries.p2() {
+        *color = TextColor(p.text_muted);
+    }
+    for mut color in &mut startup_text_queries.p3() {
+        *color = TextColor(p.text_muted);
+    }
+    for mut color in &mut startup_text_queries.p4() {
+        *color = BackgroundColor(p.bar_bg_alt);
+    }
+    for mut color in &mut startup_text_queries.p5() {
+        *color = BackgroundColor(p.border);
+    }
+}
+
 /// Button that resets the camera to its original position/orientation.
 #[derive(Component)]
 pub(crate) struct ResetCameraButton;
@@ -1300,6 +2115,13 @@ pub(crate) struct CameraRig {
     initial_translation: Vec3,
     initial_rotation: Quat,
     initial_scale: Vec3,
+}
+
+#[derive(Resource, Default)]
+pub(crate) struct TouchGestureState {
+    pub(crate) rotate: Vec2,
+    pub(crate) pan: Vec2,
+    pub(crate) zoom: f32,
 }
 
 fn structure_center_and_extents(sv: &StructureView) -> Option<(Vec3, Vec3)> {
@@ -1379,6 +2201,336 @@ pub fn clear_old_atoms(mut commands: Commands, atom_query: Query<Entity, With<At
     }
 }
 
+fn load_structure_from_catalog_path(
+    path: &str,
+    file_drag_drop: &mut crate::io::FileDragDrop,
+    catalog_channel: Option<&CatalogLoadChannel>,
+) {
+    let name = path.rsplit('/').next().unwrap_or(path);
+    file_drag_drop.status_message = format!("Loading: {name}");
+    file_drag_drop.status_kind = FileStatusKind::Info;
+
+    #[cfg(target_arch = "wasm32")]
+    let _ = catalog_channel;
+
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let spawn_remote_fallback =
+            |path_owned: String, remote_url: String, sender: CatalogLoadChannel| {
+                std::thread::spawn(move || {
+                    let result = match reqwest::blocking::get(&remote_url) {
+                        Ok(response) => {
+                            if response.status().is_success() {
+                                response
+                                    .text()
+                                    .map_err(|e| format!("Read error: {e}"))
+                                    .and_then(|text| {
+                                        if looks_like_html_response(&text) {
+                                            Err(format!(
+                                            "Unexpected HTML response while loading {remote_url}"
+                                        ))
+                                        } else {
+                                            Ok(text)
+                                        }
+                                    })
+                            } else {
+                                Err(format!(
+                                    "HTTP {} while loading remote structure",
+                                    response.status()
+                                ))
+                            }
+                        }
+                        Err(remote_err) => Err(format!("Network error: {remote_err}")),
+                    };
+                    sender.send(CatalogLoadResult {
+                        path: path_owned,
+                        source: "remote fallback".to_string(),
+                        contents: result,
+                    });
+                });
+            };
+
+        let local_path = structure_local_asset_path(path);
+        match std::fs::read_to_string(&local_path) {
+            Ok(contents) => {
+                if looks_like_html_response(&contents) {
+                    warn!(
+                        "Structure picker: local asset '{}' looks like HTML, trying remote fallback",
+                        local_path.display()
+                    );
+                    let Some(channel) = catalog_channel else {
+                        file_drag_drop.status_message =
+                            "Read error: local asset looks like HTML. Remote fallback unavailable."
+                                .to_string();
+                        file_drag_drop.status_kind = FileStatusKind::Error;
+                        return;
+                    };
+                    spawn_remote_fallback(
+                        path.to_string(),
+                        structure_remote_url(path),
+                        channel.clone(),
+                    );
+                } else if parse_and_store_catalog_structure(
+                    path,
+                    &contents,
+                    "local disk",
+                    file_drag_drop,
+                ) {
+                    file_drag_drop.dragged_file = Some(local_path);
+                }
+            }
+            Err(err) => {
+                warn!(
+                    "Structure picker: read error for '{path}' at '{}': {err}",
+                    local_path.display()
+                );
+                let Some(channel) = catalog_channel else {
+                    file_drag_drop.status_message =
+                        format!("Read error: {err}. Remote fallback unavailable.");
+                    file_drag_drop.status_kind = FileStatusKind::Error;
+                    return;
+                };
+                let path_owned = path.to_string();
+                let remote_url = structure_remote_url(path);
+                let sender = channel.clone();
+                spawn_remote_fallback(path_owned, remote_url, sender);
+            }
+        }
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    {
+        let path_owned = path.to_string();
+        spawn_local(async move {
+            let local_url = structure_local_asset_url(&path_owned);
+            let remote_url = structure_remote_url(&path_owned);
+
+            async fn fetch_text(url: String) -> anyhow::Result<String> {
+                let resp = Request::get(&url).send().await?;
+                if !resp.ok() {
+                    anyhow::bail!("HTTP {} while loading {url}", resp.status());
+                }
+                let text = resp.text().await?;
+                if looks_like_html_response(&text) {
+                    anyhow::bail!("Unexpected HTML response while loading {url}");
+                }
+                Ok(text)
+            }
+
+            let result = match fetch_text(local_url).await {
+                Ok(text) => Ok(text),
+                Err(err) => {
+                    warn!("Structure picker: local URL failed, trying remote fallback: {err}");
+                    fetch_text(remote_url).await
+                }
+            };
+
+            match result {
+                Ok(text) => crate::send_event(crate::WebEvent::Drop {
+                    name: path_owned,
+                    data: text.into_bytes(),
+                    mime_type: "text/plain".to_string(),
+                }),
+                Err(err) => {
+                    warn!("Structure picker: web fetch failed for '{path_owned}': {err}");
+                    crate::send_event(crate::WebEvent::CatalogLoadError {
+                        path: path_owned,
+                        message: format!("{err}"),
+                    })
+                }
+            };
+        });
+    }
+}
+
+#[allow(clippy::type_complexity)]
+pub(crate) fn structure_picker_toggle_button(
+    mut interaction_query: Query<
+        (&Interaction, &mut BackgroundColor),
+        (Changed<Interaction>, With<StructurePickerToggleButton>),
+    >,
+    mut picker: ResMut<StructurePickerState>,
+    theme: Res<UiTheme>,
+) {
+    for (interaction, mut color) in &mut interaction_query {
+        match *interaction {
+            Interaction::Pressed => {
+                picker.visible = !picker.visible;
+                if picker.visible {
+                    picker.query.clear();
+                }
+                *color = BackgroundColor(themed_button_bg(theme.mode, Interaction::Pressed));
+            }
+            Interaction::Hovered => {
+                *color = BackgroundColor(themed_button_bg(theme.mode, Interaction::Hovered));
+            }
+            Interaction::None => {
+                *color = BackgroundColor(themed_button_bg(theme.mode, Interaction::None));
+            }
+        }
+    }
+}
+
+pub(crate) fn structure_picker_keyboard_search(
+    mut keyboard_events: EventReader<KeyboardInput>,
+    mut picker: ResMut<StructurePickerState>,
+    mut file_drag_drop: ResMut<crate::io::FileDragDrop>,
+    catalog_channel: Option<Res<CatalogLoadChannel>>,
+) {
+    if !picker.visible {
+        return;
+    }
+
+    for event in keyboard_events.read() {
+        if event.state != ButtonState::Pressed {
+            continue;
+        }
+
+        match &event.logical_key {
+            Key::Escape => {
+                picker.visible = false;
+            }
+            Key::Backspace => {
+                picker.query.pop();
+            }
+            Key::Enter => {
+                if let Some(first) = filtered_structure_entries(&picker).first().cloned() {
+                    load_structure_from_catalog_path(
+                        &first,
+                        &mut file_drag_drop,
+                        catalog_channel.as_deref(),
+                    );
+                    picker.visible = false;
+                }
+            }
+            Key::Character(_) => {
+                if let Some(text) = &event.text {
+                    // Keep search input simple and predictable for all layouts.
+                    if text.chars().all(|ch| !ch.is_control()) {
+                        picker.query.push_str(text);
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
+pub(crate) fn refresh_structure_picker_panel(
+    mut commands: Commands,
+    picker: Res<StructurePickerState>,
+    mut panel_query: Query<&mut Node, With<StructurePickerPanel>>,
+    mut query_text: Query<&mut Text, With<StructurePickerQueryText>>,
+    mut results_root_query: Query<(Entity, Option<&Children>), With<StructurePickerResultsRoot>>,
+    theme: Res<UiTheme>,
+) {
+    let Ok(mut panel_node) = panel_query.single_mut() else {
+        return;
+    };
+    panel_node.display = if picker.visible {
+        Display::Flex
+    } else {
+        Display::None
+    };
+
+    if !picker.visible {
+        return;
+    }
+
+    if let Ok(mut text) = query_text.single_mut() {
+        text.0 = if picker.query.is_empty() {
+            "Type to filter (Enter to load first match, Esc to close)".to_string()
+        } else {
+            format!("query: {}", picker.query)
+        };
+    }
+
+    if !picker.is_changed() && !theme.is_changed() {
+        return;
+    }
+
+    let Ok((results_root, maybe_children)) = results_root_query.single_mut() else {
+        return;
+    };
+    if let Some(children) = maybe_children {
+        for child in children.iter() {
+            commands.entity(child).despawn();
+        }
+    }
+
+    let palette = theme_palette(theme.mode);
+    for path in filtered_structure_entries(&picker) {
+        let label = if path == DEFAULT_STRUCTURE_PATH {
+            format!("DEFAULT · {path}")
+        } else {
+            path.clone()
+        };
+        commands.entity(results_root).with_children(|parent| {
+            parent
+                .spawn((
+                    Button,
+                    Node {
+                        width: Val::Percent(100.0),
+                        padding: UiRect::axes(Val::Px(8.0), Val::Px(4.0)),
+                        border: UiRect::all(Val::Px(1.0)),
+                        ..default()
+                    },
+                    BorderColor(palette.border),
+                    BackgroundColor(palette.button_bg),
+                    StructurePickerResultButton { path: path.clone() },
+                    HudButton,
+                ))
+                .with_children(|button| {
+                    button.spawn((
+                        Text::new(label),
+                        TextFont {
+                            font_size: 11.0,
+                            ..default()
+                        },
+                        TextColor(palette.text),
+                        HudButtonLabel,
+                    ));
+                });
+        });
+    }
+}
+
+#[allow(clippy::type_complexity)]
+pub(crate) fn structure_picker_result_buttons(
+    mut interaction_query: Query<
+        (
+            &Interaction,
+            &StructurePickerResultButton,
+            &mut BackgroundColor,
+        ),
+        (Changed<Interaction>, With<StructurePickerResultButton>),
+    >,
+    mut picker: ResMut<StructurePickerState>,
+    mut file_drag_drop: ResMut<crate::io::FileDragDrop>,
+    catalog_channel: Option<Res<CatalogLoadChannel>>,
+    theme: Res<UiTheme>,
+) {
+    for (interaction, selected, mut background) in &mut interaction_query {
+        match *interaction {
+            Interaction::Pressed => {
+                *background = BackgroundColor(themed_button_bg(theme.mode, Interaction::Pressed));
+                load_structure_from_catalog_path(
+                    &selected.path,
+                    &mut file_drag_drop,
+                    catalog_channel.as_deref(),
+                );
+                picker.visible = false;
+            }
+            Interaction::Hovered => {
+                *background = BackgroundColor(themed_button_bg(theme.mode, Interaction::Hovered));
+            }
+            Interaction::None => {
+                *background = BackgroundColor(themed_button_bg(theme.mode, Interaction::None));
+            }
+        }
+    }
+}
+
 // System to handle button click to load default structure
 #[allow(clippy::type_complexity)]
 pub(crate) fn handle_load_default_button(
@@ -1410,6 +2562,7 @@ pub(crate) fn handle_load_default_button(
 }
 
 #[allow(clippy::type_complexity)]
+#[cfg(not(target_arch = "wasm32"))]
 pub(crate) fn handle_open_file_button(
     mut interaction_query: Query<
         (&Interaction, &mut BackgroundColor),
@@ -1422,54 +2575,75 @@ pub(crate) fn handle_open_file_button(
         match *interaction {
             Interaction::Pressed => {
                 *color = BackgroundColor(themed_button_bg(theme.mode, Interaction::Pressed));
-                #[cfg(not(target_arch = "wasm32"))]
-                {
-                    let picked = rfd::FileDialog::new()
-                        .add_filter("Structure", SUPPORTED_EXTENSIONS)
-                        .pick_file();
-                    if let Some(path) = picked {
-                        let ext = path
-                            .extension()
-                            .map(|s| s.to_string_lossy().to_ascii_lowercase());
-                        match std::fs::read_to_string(&path) {
-                            Ok(contents) => {
-                                let parsed = match ext.as_deref() {
-                                    Some(ext) => parse_structure_by_extension(ext, &contents),
-                                    _ => Err(anyhow::anyhow!("Unsupported file extension")),
-                                };
-                                match parsed {
-                                    Ok(sv) => {
-                                        let atom_count = sv.nsites();
-                                        let file_bond_count = sv.bonds.as_ref().map_or(0, Vec::len);
-                                        let name = path
-                                            .file_name()
-                                            .and_then(|n| n.to_str())
-                                            .unwrap_or("structure")
-                                            .to_string();
-                                        file_drag_drop.dragged_file = Some(path);
-                                        file_drag_drop.loaded_structure = Some(sv);
-                                        file_drag_drop.status_message = if file_bond_count > 0 {
-                                            format!(
-                                                "Loaded: {name} ({atom_count} atoms, {file_bond_count} file bonds)"
-                                            )
-                                        } else {
-                                            format!("Loaded: {name} ({atom_count} atoms)")
-                                        };
-                                        file_drag_drop.status_kind = FileStatusKind::Success;
-                                    }
-                                    Err(e) => {
-                                        file_drag_drop.status_message = format!("Parse error: {e}");
-                                        file_drag_drop.status_kind = FileStatusKind::Error;
-                                    }
+                let picked = rfd::FileDialog::new()
+                    .add_filter("Structure", SUPPORTED_EXTENSIONS)
+                    .pick_file();
+                if let Some(path) = picked {
+                    let ext = path
+                        .extension()
+                        .map(|s| s.to_string_lossy().to_ascii_lowercase());
+                    match std::fs::read_to_string(&path) {
+                        Ok(contents) => {
+                            let parsed = match ext.as_deref() {
+                                Some(ext) => parse_structure_by_extension(ext, &contents),
+                                _ => Err(anyhow::anyhow!("Unsupported file extension")),
+                            };
+                            match parsed {
+                                Ok(sv) => {
+                                    let atom_count = sv.nsites();
+                                    let file_bond_count = sv.bonds.as_ref().map_or(0, Vec::len);
+                                    let name = path
+                                        .file_name()
+                                        .and_then(|n| n.to_str())
+                                        .unwrap_or("structure")
+                                        .to_string();
+                                    file_drag_drop.dragged_file = Some(path);
+                                    file_drag_drop.loaded_structure = Some(sv);
+                                    file_drag_drop.status_message = if file_bond_count > 0 {
+                                        format!(
+                                            "Loaded: {name} ({atom_count} atoms, {file_bond_count} file bonds)"
+                                        )
+                                    } else {
+                                        format!("Loaded: {name} ({atom_count} atoms)")
+                                    };
+                                    file_drag_drop.status_kind = FileStatusKind::Success;
+                                }
+                                Err(e) => {
+                                    file_drag_drop.status_message = format!("Parse error: {e}");
+                                    file_drag_drop.status_kind = FileStatusKind::Error;
                                 }
                             }
-                            Err(e) => {
-                                file_drag_drop.status_message = format!("Read error: {e}");
-                                file_drag_drop.status_kind = FileStatusKind::Error;
-                            }
+                        }
+                        Err(e) => {
+                            file_drag_drop.status_message = format!("Read error: {e}");
+                            file_drag_drop.status_kind = FileStatusKind::Error;
                         }
                     }
                 }
+            }
+            Interaction::Hovered => {
+                *color = BackgroundColor(themed_button_bg(theme.mode, Interaction::Hovered));
+            }
+            Interaction::None => {
+                *color = BackgroundColor(themed_button_bg(theme.mode, Interaction::None));
+            }
+        }
+    }
+}
+
+#[allow(clippy::type_complexity)]
+#[cfg(target_arch = "wasm32")]
+pub(crate) fn handle_open_file_button(
+    mut interaction_query: Query<
+        (&Interaction, &mut BackgroundColor),
+        (Changed<Interaction>, With<OpenFileButton>),
+    >,
+    theme: Res<UiTheme>,
+) {
+    for (interaction, mut color) in &mut interaction_query {
+        match *interaction {
+            Interaction::Pressed => {
+                *color = BackgroundColor(themed_button_bg(theme.mode, Interaction::Pressed));
             }
             Interaction::Hovered => {
                 *color = BackgroundColor(themed_button_bg(theme.mode, Interaction::Hovered));
@@ -1490,6 +2664,7 @@ pub(crate) fn update_scene(
     sv: Option<Res<StructureView>>,
     bond_settings: Res<BondInferenceSettings>,
     color_mode: Res<AtomColorMode>,
+    mut bond_cache: ResMut<BondCache>,
     atom_query: Query<Entity, With<AtomEntity>>,
     bond_query: Query<Entity, With<BondEntity>>,
     structure_root: Query<Entity, With<StructureRoot>>,
@@ -1533,6 +2708,7 @@ pub(crate) fn update_scene(
                     &sv,
                     &bond_settings,
                     *color_mode,
+                    &mut bond_cache,
                     root_entity,
                 );
             }
@@ -1542,6 +2718,7 @@ pub(crate) fn update_scene(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 // Helper function to spawn atoms
 fn spawn_atoms(
     commands: &mut Commands,
@@ -1550,6 +2727,7 @@ fn spawn_atoms(
     sv: &StructureView,
     bond_settings: &BondInferenceSettings,
     color_mode: AtomColorMode,
+    bond_cache: &mut BondCache,
     root_entity: Entity,
 ) {
     // Create a sphere mesh for atoms
@@ -1561,14 +2739,24 @@ fn spawn_atoms(
 
     // Create materials for different elements
     let mut element_materials: HashMap<String, Handle<StandardMaterial>> = HashMap::new();
-    let (bonds, _source) = resolve_bonds(sv, bond_settings);
-    let ring_atoms = compute_ring_atoms(nsites, &bonds);
-    let bond_env_atoms = compute_bond_env_atoms(nsites, &bonds);
-    let functional_groups = compute_functional_groups(&sites, &bonds, &ring_atoms, &bond_env_atoms);
+    let (render_bonds, _source) = bond_cache.resolve_bonds_cached(sv, bond_settings);
+    let color_bonds = if bond_settings.enabled {
+        render_bonds
+    } else {
+        sv.bonds
+            .as_ref()
+            .filter(|b| !b.is_empty())
+            .map(|b| b.as_slice())
+            .unwrap_or(&[])
+    };
+    let ring_atoms = compute_ring_atoms(nsites, color_bonds);
+    let bond_env_atoms = compute_bond_env_atoms(nsites, color_bonds);
+    let functional_groups =
+        compute_functional_groups(&sites, color_bonds, &ring_atoms, &bond_env_atoms);
     let mut bond_materials: HashMap<u8, Handle<StandardMaterial>> = HashMap::new();
 
     commands.entity(root_entity).with_children(|parent| {
-        for bond in &bonds {
+        for bond in render_bonds {
             let a = &sites[bond.a];
             let b = &sites[bond.b];
             let pa = Vec3::new(a.x, a.y, a.z);
@@ -2077,16 +3265,25 @@ pub(crate) fn camera_controls(
     time: Res<Time>,
     mut mouse_motion_events: EventReader<MouseMotion>,
     mut mouse_wheel_events: EventReader<MouseWheel>,
+    mut touch_gestures: ResMut<TouchGestureState>,
     mut camera_rig: ResMut<CameraRig>,
     ui_interactions: Query<&Interaction, With<Button>>,
 ) {
     if let Ok(mut transform) = camera_query.single_mut() {
         let mut zoom_change = 0.0;
         let mut pan_request = Vec2::ZERO;
+        let mut rotate_request = Vec2::ZERO;
+        let touch_rotate = touch_gestures.rotate;
+        let touch_pan = touch_gestures.pan;
+        let touch_zoom = touch_gestures.zoom;
+        touch_gestures.rotate = Vec2::ZERO;
+        touch_gestures.pan = Vec2::ZERO;
+        touch_gestures.zoom = 0.0;
         let ui_active = ui_interactions.iter().any(|i| *i != Interaction::None);
 
         const MIN_DISTANCE: f32 = 0.2;
         const MAX_DISTANCE: f32 = 200.0;
+        const TOUCH_ZOOM_SCALE: f32 = -1.0;
 
         let mut mouse_delta = Vec2::ZERO;
         for motion in mouse_motion_events.read() {
@@ -2094,9 +3291,16 @@ pub(crate) fn camera_controls(
         }
 
         if !ui_active && mouse_buttons.pressed(MouseButton::Left) {
+            rotate_request += mouse_delta;
+        }
+        if !ui_active && touch_rotate != Vec2::ZERO {
+            rotate_request += touch_rotate;
+        }
+
+        if !ui_active && rotate_request != Vec2::ZERO {
             let sensitivity = 0.005;
-            let yaw_delta = -mouse_delta.x * sensitivity;
-            let pitch_delta = -mouse_delta.y * sensitivity;
+            let yaw_delta = -rotate_request.x * sensitivity;
+            let pitch_delta = -rotate_request.y * sensitivity;
             let yaw_rotation = Quat::from_rotation_y(yaw_delta);
             let right_axis = transform.right().normalize_or_zero();
             let pitch_rotation = if right_axis.length_squared() > 0.0 {
@@ -2134,11 +3338,17 @@ pub(crate) fn camera_controls(
         if !ui_active && mouse_buttons.pressed(MouseButton::Right) {
             pan_request = mouse_delta;
         }
+        if !ui_active && touch_pan != Vec2::ZERO {
+            pan_request += touch_pan;
+        }
 
         if !ui_active {
             for wheel in mouse_wheel_events.read() {
                 zoom_change -= wheel.y * 0.002;
             }
+        }
+        if !ui_active && touch_zoom != 0.0 {
+            zoom_change += touch_zoom * TOUCH_ZOOM_SCALE;
         }
 
         // Keep camera offset updated relative to target.
@@ -2348,7 +3558,11 @@ pub fn reset_camera_button_interaction(
 
 #[cfg(test)]
 mod tests {
+    use ccmat_core::{atomic_number, sites_cart_coord, MoleculeBuilder};
+
     use super::*;
+    use crate::io::FileDragDrop;
+    use crate::structure::StructureView;
 
     #[test]
     fn bond_tolerance_controls_system_runs_without_query_conflicts() {
@@ -2379,6 +3593,146 @@ mod tests {
             .spawn((BondToggleLabel, Text::new(""), TextColor(Color::WHITE)));
 
         app.add_systems(Update, bond_tolerance_controls);
+        app.update();
+    }
+
+    #[test]
+    fn startup_screen_spawns_hello_label() {
+        let mut app = App::new();
+        app.insert_resource(UiTheme::default());
+        app.insert_resource(IconFont(Handle::<Font>::default()));
+        app.add_systems(Startup, setup_startup_screen);
+        app.update();
+
+        let hello_count = app
+            .world()
+            .iter_entities()
+            .filter_map(|entity| entity.get::<Text>())
+            .filter(|text| text.0.contains("Load Structure"))
+            .count();
+        assert_eq!(
+            hello_count, 1,
+            "startup screen should show startup instructions"
+        );
+    }
+
+    #[test]
+    fn startup_state_transitions_to_running_when_structure_is_loaded() {
+        let mut app = App::new();
+        app.add_plugins(bevy::state::app::StatesPlugin);
+        app.insert_resource(FileDragDrop::default());
+        app.init_state::<AppUiState>();
+        app.add_systems(Update, transition_to_running_on_structure_loaded);
+
+        let sites = sites_cart_coord![
+            (0.0, 0.0, 0.0), atomic_number!(O);
+        ];
+        let mol = MoleculeBuilder::new().with_sites(sites).build_uncheck();
+        let s = StructureView {
+            inner: ccmat_core::Structure::Molecule(mol),
+            bonds: None,
+            chain_ids: None,
+            residues: None,
+        };
+        app.world_mut()
+            .resource_mut::<FileDragDrop>()
+            .loaded_structure = Some(s);
+
+        app.update();
+        app.update();
+
+        let state = app.world().resource::<State<AppUiState>>();
+        assert_eq!(state.get(), &AppUiState::Running);
+    }
+
+    #[test]
+    fn startup_screen_is_cleaned_up_after_transition() {
+        let mut app = App::new();
+        app.add_plugins(bevy::state::app::StatesPlugin);
+        app.insert_resource(UiTheme::default());
+        app.insert_resource(IconFont(Handle::<Font>::default()));
+        app.insert_resource(FileDragDrop::default());
+        app.init_state::<AppUiState>();
+        app.add_systems(OnEnter(AppUiState::Startup), setup_startup_screen);
+        app.add_systems(OnExit(AppUiState::Startup), cleanup_startup_screen);
+        app.add_systems(Update, transition_to_running_on_structure_loaded);
+
+        app.update();
+        let startup_count_before = app
+            .world()
+            .iter_entities()
+            .filter(|entity| entity.contains::<StartupScreenRoot>())
+            .count();
+        assert_eq!(startup_count_before, 1);
+
+        let sites = sites_cart_coord![
+            (0.0, 0.0, 0.0), atomic_number!(O);
+        ];
+        let mol = MoleculeBuilder::new().with_sites(sites).build_uncheck();
+        let s = StructureView {
+            inner: ccmat_core::Structure::Molecule(mol),
+            bonds: None,
+            chain_ids: None,
+            residues: None,
+        };
+        app.world_mut()
+            .resource_mut::<FileDragDrop>()
+            .loaded_structure = Some(s);
+
+        app.update();
+        app.update();
+
+        let startup_count_after = app
+            .world()
+            .iter_entities()
+            .filter(|entity| entity.contains::<StartupScreenRoot>())
+            .count();
+        assert_eq!(startup_count_after, 0);
+    }
+
+    #[test]
+    fn startup_theme_system_runs_without_query_conflicts() {
+        let mut app = App::new();
+        app.insert_resource(UiTheme {
+            mode: ThemeMode::Dark,
+        });
+        app.world_mut()
+            .spawn((StartupTitleText, TextColor(Color::WHITE)));
+        app.world_mut()
+            .spawn((StartupHelpText, TextColor(Color::WHITE)));
+
+        app.add_systems(Update, apply_theme_to_startup_screen);
+
+        app.world_mut().resource_mut::<UiTheme>().mode = ThemeMode::Light;
+        app.update();
+    }
+
+    #[test]
+    fn hud_status_message_is_user_friendly_for_errors() {
+        let msg = status_message_for_hud("Read error: missing file", FileStatusKind::Error);
+        assert!(msg.contains("Could not read structure source"));
+        let msg = status_message_for_hud("Parse error: bad token", FileStatusKind::Error);
+        assert!(msg.contains("Could not parse"));
+    }
+
+    #[test]
+    fn structure_loading_overlay_system_runs_without_query_conflicts() {
+        let mut app = App::new();
+        app.init_resource::<Time>();
+        app.insert_resource(UiTheme {
+            mode: ThemeMode::Dark,
+        });
+        app.insert_resource(crate::io::FileDragDrop::default());
+
+        app.world_mut()
+            .spawn((StructureLoadingOverlay, Node::default()));
+        app.world_mut()
+            .spawn((StructureLoadingTitle, Text::new("")));
+        app.world_mut()
+            .spawn((StructureLoadingTelemetry, Text::new("")));
+        app.world_mut()
+            .spawn((StructureLoadingProgressFill, Node::default()));
+        app.add_systems(Update, update_structure_loading_overlay);
         app.update();
     }
 }

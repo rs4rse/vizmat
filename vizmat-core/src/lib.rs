@@ -3,19 +3,24 @@ use std::sync::OnceLock;
 use bevy::log::{Level, LogPlugin};
 use bevy::prelude::*;
 use crossbeam_channel::Sender;
+use serde::de::{self, Deserializer};
+
 #[cfg(target_arch = "wasm32")]
-use crossbeam_channel::{Receiver, TryRecvError};
-use gloo::events::{EventListener, EventListenerOptions};
-use web_sys::wasm_bindgen::JsCast;
-use web_sys::{DragEvent, FileReader};
+use {
+    crossbeam_channel::{Receiver, TryRecvError},
+    gloo::events::{EventListener, EventListenerOptions},
+    gloo::utils::format::JsValueSerdeExt,
+    web_sys::wasm_bindgen::{JsCast, JsValue},
+    web_sys::{CustomEvent, CustomEventInit, DragEvent, File, FileReader},
+};
 
 pub(crate) mod io;
 pub(crate) mod ui;
 
 pub(crate) mod client;
 pub(crate) mod constants;
-pub(crate) mod formats;
-pub(crate) mod structure;
+pub mod formats;
+pub mod structure;
 
 use crate::client::{poll_websocket_stream, setup_websocket_stream};
 use crate::formats::{
@@ -25,17 +30,22 @@ use crate::io::{
     handle_file_drag_drop, load_dropped_file, update_structure_from_file, FileDragDrop,
 };
 use crate::structure::{
-    update_structure_system, AtomColorMode, BondInferenceSettings, UpdateStructure,
+    mark_bond_cache_dirty, update_structure_system, AtomColorMode, BondCache,
+    BondInferenceSettings, StructureView, UpdateStructure,
 };
 use crate::ui::{
     apply_bond_tolerance_debounce, apply_theme_to_atom_hover_panel, apply_theme_to_hud,
-    auto_reset_view_on_crystal_change, bond_tolerance_controls, camera_controls, color_mode_button,
-    handle_load_default_button, handle_open_file_button, reset_camera_button_interaction,
-    setup_cameras, setup_file_ui, setup_light, sync_atom_selection_highlight,
+    apply_theme_to_startup_screen, auto_reset_view_on_crystal_change, bond_tolerance_controls,
+    camera_controls, cleanup_startup_screen, color_mode_button, handle_catalog_load_results,
+    handle_load_default_button, handle_open_file_button, hide_non_startup_controls,
+    refresh_structure_picker_panel, reset_camera_button_interaction, setup_cameras, setup_file_ui,
+    setup_light, setup_startup_screen, show_non_startup_controls, structure_picker_keyboard_search,
+    structure_picker_result_buttons, structure_picker_toggle_button, sync_atom_selection_highlight,
     sync_color_mode_label, sync_gizmo_axis_rotation, toggle_light_attachment, toggle_theme_button,
-    update_atom_hover_cache, update_atom_hover_label, update_bond_order_legend,
-    update_color_mode_availability, update_file_ui, update_gizmo_viewport, update_scene,
-    update_selected_atom_from_click,
+    transition_to_running_on_structure_loaded, update_atom_hover_cache, update_atom_hover_label,
+    update_bond_order_legend, update_color_mode_availability, update_file_ui,
+    update_gizmo_viewport, update_scene, update_selected_atom_from_click,
+    update_structure_loading_overlay, AppUiState, CatalogLoadChannel, TouchGestureState,
 };
 use crate::ui::{setup_buttons, spawn_axis};
 
@@ -71,6 +81,58 @@ pub enum WebEvent {
         data: Vec<u8>,
         mime_type: String,
     },
+    CatalogLoadError {
+        path: String,
+        message: String,
+    },
+    TouchGesture {
+        kind: TouchGestureKind,
+        dx: f32,
+        dy: f32,
+        scale_delta: f32,
+    },
+}
+
+#[derive(Clone, Copy, Debug)]
+pub enum TouchGestureKind {
+    Rotate,
+    TwoFinger,
+}
+
+impl<'de> serde::Deserialize<'de> for TouchGestureKind {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let raw = <String as serde::Deserialize>::deserialize(deserializer)?;
+        let normalized = raw.trim().to_ascii_lowercase().replace(['_', '-'], "");
+
+        match normalized.as_str() {
+            "rotate" => Ok(Self::Rotate),
+            "twofinger" => Ok(Self::TwoFinger),
+            _ => Err(de::Error::unknown_variant(
+                &raw,
+                &[
+                    "Rotate",
+                    "rotate",
+                    "TwoFinger",
+                    "two_finger",
+                    "Two_Finger",
+                    "two-finger",
+                ],
+            )),
+        }
+    }
+}
+
+#[allow(dead_code)]
+#[derive(Clone, Copy, Debug, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+struct TouchGesturePayload {
+    gesture: TouchGestureKind,
+    dx: f32,
+    dy: f32,
+    scale_delta: f32,
 }
 
 pub struct WebPlugin {
@@ -113,6 +175,7 @@ impl Plugin for WebPlugin {
             let sender = ChannelSender::<WebEvent>(sender);
             set_sender(sender);
             register_drop(&self.dom_drop_element_id).unwrap();
+            register_touch_gesture_listener().unwrap();
         }
     }
 }
@@ -132,11 +195,14 @@ pub fn set_sender(sender: ChannelSender<WebEvent>) {
 
 #[cfg(target_arch = "wasm32")]
 fn window() -> Window {
-    use bevy::window::WindowResolution;
-
     Window {
         canvas: Some("#bevy-canvas".into()),
-        resolution: WindowResolution::new(1280.0, 720.0).with_scale_factor_override(1.0),
+        fit_canvas_to_parent: true,
+        resize_constraints: WindowResizeConstraints {
+            min_width: 1.0,
+            min_height: 1.0,
+            ..default()
+        },
         prevent_default_event_handling: false,
         ..default()
     }
@@ -153,7 +219,30 @@ fn window() -> Window {
     }
 }
 
-// #[cfg(target_arch = "wasm32")]
+#[cfg(target_arch = "wasm32")]
+pub fn get_web_theme() -> Option<String> {
+    let doc = gloo::utils::document();
+    let theme = doc.document_element()?.get_attribute("data-theme");
+    Some(theme.unwrap_or_else(|| "dark".to_string()))
+}
+
+#[cfg(target_arch = "wasm32")]
+pub fn set_web_theme(theme: &str) -> Option<()> {
+    let doc = gloo::utils::document();
+    let normalized = if theme == "light" { "light" } else { "dark" };
+    doc.document_element()?
+        .set_attribute("data-theme", normalized)
+        .ok()?;
+
+    let event_init = CustomEventInit::new();
+    event_init.set_detail(&JsValue::from_serde(&serde_json::json!({ "theme": normalized })).ok()?);
+    let event = CustomEvent::new_with_event_init_dict("vizmat-theme-change", &event_init).ok()?;
+    web_sys::window()?.dispatch_event(&event).ok()?;
+
+    Some(())
+}
+
+#[cfg(target_arch = "wasm32")]
 pub fn register_drop(id: &str) -> Option<()> {
     let doc = gloo::utils::document();
     let element = doc.get_element_by_id(id)?;
@@ -193,15 +282,26 @@ pub fn register_drop(id: &str) -> Option<()> {
             info!("drop event");
 
             let transfer = event.data_transfer().expect("invalid data transfer");
-            let files = transfer.items();
+            let file_list = transfer.files().expect("invalid file list");
+            let item_list = transfer.items();
 
-            for idx in 0..files.length() {
-                let file = files.get(idx).expect("invalid item");
-                let file_info = file
-                    .get_as_file()
-                    .ok()
-                    .flatten()
-                    .expect("cannot flatten fileinfo");
+            let mut files: Vec<File> = Vec::new();
+            for idx in 0..file_list.length() {
+                if let Some(file) = file_list.get(idx) {
+                    files.push(file);
+                }
+            }
+            if files.is_empty() {
+                for idx in 0..item_list.length() {
+                    let item = item_list.get(idx).expect("invalid item");
+                    if let Ok(Some(file)) = item.get_as_file() {
+                        files.push(file);
+                    }
+                }
+            }
+
+            for (idx, file_info) in files.into_iter().enumerate() {
+                let idx = idx as u32;
 
                 info!(
                     "file[{idx}] = '{}' - {} - {} b",
@@ -234,8 +334,45 @@ pub fn register_drop(id: &str) -> Option<()> {
 
                 file_reader.read_as_array_buffer(&file_info).unwrap();
             }
+        },
+    )
+    .forget();
 
-            info!("dragover event");
+    Some(())
+}
+
+#[cfg(target_arch = "wasm32")]
+fn register_touch_gesture_listener() -> Option<()> {
+    let document = gloo::utils::document();
+    let window = document.default_view()?;
+
+    EventListener::new_with_options(
+        &window,
+        "vizmat-touch-gesture",
+        EventListenerOptions::enable_prevent_default(),
+        move |event| {
+            let event: CustomEvent = match event.clone().dyn_into() {
+                Ok(event) => event,
+                Err(err) => {
+                    warn!("Ignoring invalid touch-gesture event: {err:?}");
+                    return;
+                }
+            };
+
+            let payload: TouchGesturePayload = match event.detail().into_serde() {
+                Ok(payload) => payload,
+                Err(err) => {
+                    warn!("Ignoring touch-gesture payload parse failure: {err}");
+                    return;
+                }
+            };
+
+            send_event(WebEvent::TouchGesture {
+                kind: payload.gesture,
+                dx: payload.dx,
+                dy: payload.dy,
+                scale_delta: payload.scale_delta,
+            });
         },
     )
     .forget();
@@ -262,8 +399,12 @@ pub fn run_app() {
             dom_drop_element_id: String::from("bevy-canvas"),
         })
         .init_resource::<FileDragDrop>()
+        .init_resource::<CatalogLoadChannel>()
+        .init_resource::<TouchGestureState>()
         .init_resource::<AtomColorMode>()
         .init_resource::<BondInferenceSettings>()
+        .init_resource::<BondCache>()
+        .init_state::<AppUiState>()
         .add_event::<UpdateStructure>()
         .add_event::<bevy::window::FileDragAndDrop>()
         .add_systems(
@@ -272,9 +413,13 @@ pub fn run_app() {
                 setup_cameras,
                 setup_buttons,
                 setup_file_ui,
+                setup_startup_screen.after(setup_file_ui),
+                hide_non_startup_controls.after(setup_file_ui),
                 setup_websocket_stream,
             ),
         )
+        .add_systems(OnExit(AppUiState::Startup), cleanup_startup_screen)
+        .add_systems(OnEnter(AppUiState::Running), show_non_startup_controls)
         .add_systems(Startup, spawn_axis.after(setup_cameras))
         .add_systems(Startup, (setup_light).after(setup_cameras))
         .add_systems(
@@ -285,32 +430,89 @@ pub fn run_app() {
                 handle_file_drag_drop,
                 load_dropped_file,
                 update_structure_from_file,
-                update_file_ui,
-                toggle_light_attachment,
             ),
         )
-        .add_systems(Update, reset_camera_button_interaction)
-        .add_systems(Update, handle_load_default_button)
-        .add_systems(Update, handle_open_file_button)
-        .add_systems(Update, update_selected_atom_from_click)
-        .add_systems(Update, update_color_mode_availability)
+        .add_systems(Update, update_file_ui)
         .add_systems(
             Update,
-            update_atom_hover_cache.after(update_color_mode_availability),
+            mark_bond_cache_dirty
+                .after(apply_bond_tolerance_debounce)
+                .run_if(in_state(AppUiState::Running)),
         )
-        .add_systems(Update, color_mode_button)
-        .add_systems(Update, sync_color_mode_label.after(color_mode_button))
-        .add_systems(Update, bond_tolerance_controls)
+        .add_systems(Update, update_structure_loading_overlay)
+        .add_systems(Update, handle_catalog_load_results)
         .add_systems(
             Update,
-            apply_bond_tolerance_debounce.after(bond_tolerance_controls),
+            transition_to_running_on_structure_loaded.run_if(in_state(AppUiState::Startup)),
+        )
+        .add_systems(
+            Update,
+            reset_camera_button_interaction.run_if(in_state(AppUiState::Running)),
+        )
+        .add_systems(
+            Update,
+            handle_load_default_button.run_if(in_state(AppUiState::Running)),
+        )
+        .add_systems(
+            Update,
+            handle_open_file_button.run_if(in_state(AppUiState::Running)),
+        )
+        .add_systems(Update, structure_picker_toggle_button)
+        .add_systems(Update, structure_picker_keyboard_search)
+        .add_systems(
+            Update,
+            refresh_structure_picker_panel.after(structure_picker_keyboard_search),
+        )
+        .add_systems(Update, structure_picker_result_buttons)
+        .add_systems(
+            Update,
+            update_selected_atom_from_click.run_if(in_state(AppUiState::Running)),
+        )
+        .add_systems(
+            Update,
+            update_color_mode_availability
+                .after(mark_bond_cache_dirty)
+                .run_if(in_state(AppUiState::Running)),
+        )
+        .add_systems(
+            Update,
+            update_atom_hover_cache
+                .after(update_color_mode_availability)
+                .run_if(in_state(AppUiState::Running)),
+        )
+        .add_systems(
+            Update,
+            color_mode_button.run_if(in_state(AppUiState::Running)),
+        )
+        .add_systems(
+            Update,
+            sync_color_mode_label
+                .after(color_mode_button)
+                .run_if(in_state(AppUiState::Running)),
+        )
+        .add_systems(
+            Update,
+            bond_tolerance_controls.run_if(in_state(AppUiState::Running)),
+        )
+        .add_systems(
+            Update,
+            apply_bond_tolerance_debounce
+                .after(bond_tolerance_controls)
+                .run_if(in_state(AppUiState::Running)),
         )
         .add_systems(Update, toggle_theme_button)
         .add_systems(Update, apply_theme_to_hud)
         .add_systems(Update, apply_theme_to_atom_hover_panel)
+        .add_systems(Update, apply_theme_to_startup_screen)
         .add_systems(
             Update,
-            auto_reset_view_on_crystal_change.after(update_structure_from_file),
+            auto_reset_view_on_crystal_change
+                .after(update_structure_from_file)
+                .run_if(in_state(AppUiState::Running)),
+        )
+        .add_systems(
+            Update,
+            toggle_light_attachment.run_if(in_state(AppUiState::Running)),
         )
         .add_systems(
             Update,
@@ -318,55 +520,96 @@ pub fn run_app() {
                 camera_controls,
                 sync_gizmo_axis_rotation,
                 update_gizmo_viewport,
-                update_scene,
+                update_scene.after(mark_bond_cache_dirty),
                 sync_atom_selection_highlight.after(update_scene),
                 update_bond_order_legend.after(update_scene),
                 update_atom_hover_label.after(update_scene),
-            ),
+            )
+                .run_if(in_state(AppUiState::Running)),
         )
         .add_observer(web_event_observer)
         .run();
 }
 
-fn web_event_observer(trigger: Trigger<WebEvent>, mut file_drag_drop: ResMut<FileDragDrop>) {
-    let WebEvent::Drop {
-        name,
-        data,
-        mime_type,
-    } = trigger.event();
+fn web_event_observer(
+    trigger: Trigger<WebEvent>,
+    mut file_drag_drop: ResMut<FileDragDrop>,
+    mut next_ui_state: ResMut<NextState<AppUiState>>,
+    mut commands: Commands,
+    mut touch_gesture_state: ResMut<TouchGestureState>,
+) {
+    match trigger.event() {
+        WebEvent::Drop {
+            name,
+            data,
+            mime_type,
+        } => {
+            let ext = name.rsplit('.').next().unwrap_or_default();
+            if !is_supported_extension(ext) {
+                set_file_error_status(
+                    &mut file_drag_drop,
+                    format!(
+                        "Unsupported file. Please drop {}",
+                        SUPPORTED_EXTENSIONS_HELP
+                    ),
+                );
+                return;
+            }
+            let contents = String::from_utf8_lossy(data);
+            match parse_structure_by_extension(ext, &contents) {
+                Ok(crystal) => {
+                    let crystal_resource = crystal.clone();
+                    set_file_loaded_status(&mut file_drag_drop, name, crystal);
+                    commands.insert_resource(crystal_resource);
+                    next_ui_state.set(AppUiState::Running);
+                }
+                Err(e) => {
+                    eprintln!("Failed to parse structure file: {}", e);
+                    set_file_error_status(&mut file_drag_drop, format!("Parse error: {e}"));
+                    warn!("Web drop parse error: {e}");
+                }
+            }
 
-    let ext = name.rsplit('.').next().unwrap_or_default();
-    if is_supported_extension(ext) {
-        let contents = String::from_utf8_lossy(data);
-        let parsed = parse_structure_by_extension(ext, &contents);
-        match parsed {
-            Ok(s) => {
-                let atom_count = s.nsites();
-                let file_bond_count = s.bonds.as_ref().map_or(0, Vec::len);
-                file_drag_drop.dragged_file = None;
-                file_drag_drop.loaded_structure = Some(s);
-                file_drag_drop.status_message = if file_bond_count > 0 {
-                    format!("Loaded: {name} ({atom_count} atoms, {file_bond_count} file bonds)")
-                } else {
-                    format!("Loaded: {name} ({atom_count} atoms)")
-                };
-                file_drag_drop.status_kind = crate::io::FileStatusKind::Success;
-            }
-            Err(e) => {
-                eprintln!("Failed to parse structure file: {}", e);
-                file_drag_drop.status_message = format!("Parse error: {e}");
-                file_drag_drop.status_kind = crate::io::FileStatusKind::Error;
-            }
+            info!("loaded file: '{name}'");
+            info!("loaded file mime type: '{mime_type}'");
         }
-    } else {
-        file_drag_drop.status_message = format!(
-            "Unsupported file. Please drop {}",
-            SUPPORTED_EXTENSIONS_HELP
-        );
-        file_drag_drop.status_kind = crate::io::FileStatusKind::Error;
-        return;
+        WebEvent::CatalogLoadError { path, message } => {
+            let name = path.rsplit('/').next().unwrap_or(path);
+            file_drag_drop.status_message = format!("Load error ({name}): {message}");
+            file_drag_drop.status_kind = crate::io::FileStatusKind::Error;
+            eprintln!("Failed to load catalog structure '{path}': {message}");
+        }
+        WebEvent::TouchGesture {
+            kind,
+            dx,
+            dy,
+            scale_delta,
+        } => match kind {
+            TouchGestureKind::Rotate => {
+                touch_gesture_state.rotate += Vec2::new(*dx, *dy);
+            }
+            TouchGestureKind::TwoFinger => {
+                touch_gesture_state.pan += Vec2::new(*dx, *dy);
+                touch_gesture_state.zoom += *scale_delta;
+            }
+        },
     }
+}
 
-    info!("loaded file: '{name}'");
-    info!("loaded file mime type: '{mime_type}'");
+fn set_file_loaded_status(file_drag_drop: &mut FileDragDrop, name: &str, sv: StructureView) {
+    let atom_count = sv.nsites();
+    let file_bond_count = sv.bonds.as_ref().map_or(0, Vec::len);
+    file_drag_drop.dragged_file = None;
+    file_drag_drop.loaded_structure = Some(sv);
+    file_drag_drop.status_message = if file_bond_count > 0 {
+        format!("Loaded: {name} ({atom_count} atoms, {file_bond_count} file bonds)")
+    } else {
+        format!("Loaded: {name} ({atom_count} atoms)")
+    };
+    file_drag_drop.status_kind = crate::io::FileStatusKind::Success;
+}
+
+fn set_file_error_status(file_drag_drop: &mut FileDragDrop, message: String) {
+    file_drag_drop.status_message = message;
+    file_drag_drop.status_kind = crate::io::FileStatusKind::Error;
 }
