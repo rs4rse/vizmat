@@ -158,6 +158,10 @@ pub enum AtomColorMode {
 #[derive(Component)]
 pub struct AtomEntity;
 
+// Component to mark lattice entity
+#[derive(Component)]
+pub struct LatticeEntity;
+
 #[derive(Component, Debug, Clone, Copy)]
 pub struct AtomIndex(pub usize);
 
