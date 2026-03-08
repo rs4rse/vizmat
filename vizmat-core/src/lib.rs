@@ -45,7 +45,8 @@ use crate::ui::{
     transition_to_running_on_structure_loaded, update_atom_hover_cache, update_atom_hover_label,
     update_bond_order_legend, update_color_mode_availability, update_file_ui,
     update_gizmo_viewport, update_scene, update_selected_atom_from_click,
-    update_structure_loading_overlay, AppUiState, CatalogLoadChannel, TouchGestureState,
+    update_structure_loading_overlay, AppUiState, ArcballState, CatalogLoadChannel,
+    TouchGestureState,
 };
 use crate::ui::{setup_buttons, spawn_axis};
 
@@ -404,6 +405,7 @@ pub fn run_app() {
         .init_resource::<AtomColorMode>()
         .init_resource::<BondInferenceSettings>()
         .init_resource::<BondCache>()
+        .init_resource::<ArcballState>()
         .init_state::<AppUiState>()
         .add_event::<UpdateStructure>()
         .add_event::<bevy::window::FileDragAndDrop>()
