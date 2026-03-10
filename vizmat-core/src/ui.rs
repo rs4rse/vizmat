@@ -3457,34 +3457,33 @@ pub(crate) fn camera_controls(
             offset = if direction.length_squared() > 0.0 {
                 direction * distance
             } else {
+                // TODO: ??? why needed?
                 Vec3::new(0.0, 0.0, distance)
             };
 
             transform.translation = camera_rig.target + offset;
-            // transform.look_at(camera_rig.target, Vec3::Y);
-            transform.scale = Vec3::ONE;
-            camera_rig.distance = distance;
         } else {
-            // TODO:
             for wheel in mouse_wheel_events.read() {
-                zoom_change -= wheel.y * 0.002;
+                // TODO: speed still not very ideal, maybe better to use exp scale on zoom change
+                zoom_change -= wheel.y * 0.004;
             }
-            info!("zoomchange: {zoom_change}");
+            if zoom_change == 0.0 {
+                return;
+            }
             // Keep camera offset updated relative to target.
             let mut offset = transform.translation - camera_rig.target;
             if offset.length_squared() < f32::EPSILON {
                 offset = Vec3::new(0.0, 0.0, camera_rig.distance.max(1.0));
             }
+            let direction = offset.normalize_or_zero();
             let mut distance = offset.length().max(MIN_DISTANCE);
             if zoom_change != 0.0 {
                 let factor = (1.0 + zoom_change).clamp(0.2, 5.0);
                 distance = (distance * factor).clamp(MIN_DISTANCE, MAX_DISTANCE);
             }
-            // transform.translation = camera_rig.target + offset;
-            // transform.look_at(camera_rig.target, Vec3::Y);
-            // transform.scale = Vec3::ONE;
-            info!("distance: {distance}");
             camera_rig.distance = distance;
+            offset = direction * distance;
+            transform.translation = camera_rig.target + offset;
         }
 
         // if keyboard.pressed(KeyCode::KeyQ) || keyboard.pressed(KeyCode::KeyE) {
