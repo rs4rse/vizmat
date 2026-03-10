@@ -3385,6 +3385,10 @@ pub(crate) fn camera_controls(
             mouse_delta += motion.delta;
         }
 
+        for wheel in mouse_wheel_events.read() {
+            zoom_change -= wheel.y * 0.004;
+        }
+
         if ui_active {
             return;
         }
@@ -3431,7 +3435,9 @@ pub(crate) fn camera_controls(
             }
 
             state.prev_cursor = Some(cursor);
-        } else if mouse_buttons.pressed(MouseButton::Right) {
+        }
+
+        if mouse_buttons.pressed(MouseButton::Right) {
             // Pan
             //
             pan_request = mouse_delta;
@@ -3462,14 +3468,9 @@ pub(crate) fn camera_controls(
             };
 
             transform.translation = camera_rig.target + offset;
-        } else {
-            for wheel in mouse_wheel_events.read() {
-                // TODO: speed still not very ideal, maybe better to use exp scale on zoom change
-                zoom_change -= wheel.y * 0.004;
-            }
-            if zoom_change == 0.0 {
-                return;
-            }
+        }
+
+        if zoom_change != 0.0 {
             // Keep camera offset updated relative to target.
             let mut offset = transform.translation - camera_rig.target;
             if offset.length_squared() < f32::EPSILON {
@@ -3477,6 +3478,7 @@ pub(crate) fn camera_controls(
             }
             let direction = offset.normalize_or_zero();
             let mut distance = offset.length().max(MIN_DISTANCE);
+            // TODO: speed still not very ideal, maybe better to use exp scale on zoom change
             if zoom_change != 0.0 {
                 let factor = (1.0 + zoom_change).clamp(0.2, 5.0);
                 distance = (distance * factor).clamp(MIN_DISTANCE, MAX_DISTANCE);
@@ -3486,26 +3488,64 @@ pub(crate) fn camera_controls(
             transform.translation = camera_rig.target + offset;
         }
 
-        // if keyboard.pressed(KeyCode::KeyQ) || keyboard.pressed(KeyCode::KeyE) {
-        //     let mut yaw = 0.0;
-        //     if keyboard.pressed(KeyCode::KeyQ) {
-        //         yaw += 1.0;
-        //     }
-        //     if keyboard.pressed(KeyCode::KeyE) {
-        //         yaw -= 1.0;
-        //     }
-        //     let rotate_speed = 1.8;
-        //     let distance = (camera_rig.target - transform.translation)
-        //         .length()
-        //         .max(MIN_DISTANCE);
-        //     let mut forward = (camera_rig.target - transform.translation).normalize_or_zero();
-        //     if forward.length_squared() < f32::EPSILON {
-        //         forward = -transform.forward().normalize_or_zero();
-        //     }
-        //     let yaw_rotation = Quat::from_rotation_y(yaw * rotate_speed * time.delta_secs());
-        //     let rotated_forward = (yaw_rotation * forward).normalize_or_zero();
-        //     camera_rig.target = transform.translation + rotated_forward * distance;
-        // }
+        if keyboard.pressed(KeyCode::KeyQ)
+            || keyboard.pressed(KeyCode::KeyE)
+            || keyboard.pressed(KeyCode::KeyW)
+            || keyboard.pressed(KeyCode::KeyS)
+            || keyboard.pressed(KeyCode::KeyA)
+            || keyboard.pressed(KeyCode::KeyD)
+            || keyboard.pressed(KeyCode::ShiftLeft)
+            || keyboard.pressed(KeyCode::ShiftRight)
+        {
+            let ROTATE_SPEED = 1.8;
+            let MOVE_SPEED = 5.0;
+            let SPRINT_SPEED = 10.0;
+            // --- YAW rotation (Q/E) ---
+            let mut offset = transform.translation - camera_rig.target;
+            let mut yaw = 0.0;
+            if keyboard.pressed(KeyCode::KeyQ) {
+                yaw += 1.0;
+            }
+            if keyboard.pressed(KeyCode::KeyE) {
+                yaw -= 1.0;
+            }
+            let up = *transform.up();
+            if yaw != 0.0 {
+                let yaw_rotation =
+                    Quat::from_axis_angle(up, yaw * ROTATE_SPEED * time.delta_secs());
+                offset = yaw_rotation * offset;
+                transform.translation = camera_rig.target + offset;
+                transform.look_at(camera_rig.target, up);
+            }
+
+            // --- WASD movement ---
+            let forward = (-offset).normalize_or_zero();
+            let right = transform.right();
+            let mut move_dir = Vec3::ZERO;
+            if keyboard.pressed(KeyCode::KeyW) {
+                move_dir += forward;
+            }
+            if keyboard.pressed(KeyCode::KeyS) {
+                move_dir -= forward;
+            }
+            if keyboard.pressed(KeyCode::KeyD) {
+                move_dir += *right;
+            }
+            if keyboard.pressed(KeyCode::KeyA) {
+                move_dir -= *right;
+            }
+
+            if move_dir.length_squared() > 0.0 {
+                let sprint =
+                    keyboard.pressed(KeyCode::ShiftLeft) || keyboard.pressed(KeyCode::ShiftRight);
+                let move_speed = if sprint { SPRINT_SPEED } else { MOVE_SPEED };
+                let distance = offset.length().max(MIN_DISTANCE);
+                let distance_factor = (distance * 0.25).clamp(0.5, 12.0);
+                let step = move_dir.normalize() * move_speed * distance_factor * time.delta_secs();
+                camera_rig.target += step;
+                transform.translation += step;
+            }
+        }
 
         // if !ui_active && touch_pan != Vec2::ZERO {
         //     pan_request += touch_pan;
