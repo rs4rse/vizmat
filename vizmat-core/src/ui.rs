@@ -3046,6 +3046,7 @@ pub fn setup_cameras(mut commands: Commands, windows: Query<&Window>) {
                 order: 0,
                 ..default()
             },
+            Projection::default(),
             IsDefaultUiCamera,
             Transform::from_xyz(5.0, 5.0, 5.0).looking_at(Vec3::ZERO, Vec3::Y),
             LAYER_CANVAS,
@@ -3384,8 +3385,11 @@ pub(crate) fn camera_controls(
             mouse_delta += motion.delta;
         }
 
-        if !ui_active
-            && (mouse_buttons.pressed(MouseButton::Left) || touch_rotate != Vec2::ZERO)
+        if ui_active {
+            return;
+        }
+
+        if (mouse_buttons.pressed(MouseButton::Left) || touch_rotate != Vec2::ZERO)
             && !keyboard.pressed(KeyCode::ShiftLeft)
         {
             // This is a direct-view arcball control implementation.
@@ -3427,6 +3431,60 @@ pub(crate) fn camera_controls(
             }
 
             state.prev_cursor = Some(cursor);
+        } else if mouse_buttons.pressed(MouseButton::Right) {
+            // Pan
+            //
+            pan_request = mouse_delta;
+
+            // Keep camera offset updated relative to target.
+            let mut offset = transform.translation - camera_rig.target;
+            if offset.length_squared() < f32::EPSILON {
+                offset = Vec3::new(0.0, 0.0, camera_rig.distance.max(1.0));
+            }
+
+            // FPS-style keyboard movement of the camera perspective.
+            let distance = offset.length().max(MIN_DISTANCE);
+            let right = transform.right();
+            let up = transform.up();
+
+            if pan_request != Vec2::ZERO {
+                let pan_speed = 0.0005 * distance;
+                let pan_offset = (-pan_request.x * right + pan_request.y * up) * pan_speed;
+                camera_rig.target += pan_offset;
+            }
+
+            let direction = offset.normalize_or_zero();
+            offset = if direction.length_squared() > 0.0 {
+                direction * distance
+            } else {
+                Vec3::new(0.0, 0.0, distance)
+            };
+
+            transform.translation = camera_rig.target + offset;
+            // transform.look_at(camera_rig.target, Vec3::Y);
+            transform.scale = Vec3::ONE;
+            camera_rig.distance = distance;
+        } else {
+            // TODO:
+            for wheel in mouse_wheel_events.read() {
+                zoom_change -= wheel.y * 0.002;
+            }
+            info!("zoomchange: {zoom_change}");
+            // Keep camera offset updated relative to target.
+            let mut offset = transform.translation - camera_rig.target;
+            if offset.length_squared() < f32::EPSILON {
+                offset = Vec3::new(0.0, 0.0, camera_rig.distance.max(1.0));
+            }
+            let mut distance = offset.length().max(MIN_DISTANCE);
+            if zoom_change != 0.0 {
+                let factor = (1.0 + zoom_change).clamp(0.2, 5.0);
+                distance = (distance * factor).clamp(MIN_DISTANCE, MAX_DISTANCE);
+            }
+            // transform.translation = camera_rig.target + offset;
+            // transform.look_at(camera_rig.target, Vec3::Y);
+            // transform.scale = Vec3::ONE;
+            info!("distance: {distance}");
+            camera_rig.distance = distance;
         }
 
         // if keyboard.pressed(KeyCode::KeyQ) || keyboard.pressed(KeyCode::KeyE) {
@@ -3449,14 +3507,11 @@ pub(crate) fn camera_controls(
         //     let rotated_forward = (yaw_rotation * forward).normalize_or_zero();
         //     camera_rig.target = transform.translation + rotated_forward * distance;
         // }
-        //
-        // if !ui_active && mouse_buttons.pressed(MouseButton::Right) {
-        //     pan_request = mouse_delta;
-        // }
+
         // if !ui_active && touch_pan != Vec2::ZERO {
         //     pan_request += touch_pan;
         // }
-        //
+
         // if !ui_active {
         //     for wheel in mouse_wheel_events.read() {
         //         zoom_change -= wheel.y * 0.002;
