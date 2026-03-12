@@ -2172,10 +2172,22 @@ impl Default for CameraRig {
 }
 
 #[derive(Resource, Default)]
-pub(crate) struct TouchGestureState {
-    pub(crate) rotate: Vec2,
+pub(crate) struct TwoFingersTouchGestureState {
     pub(crate) pan: Vec2,
     pub(crate) zoom: f32,
+}
+
+#[derive(Default)]
+pub(crate) enum OneFingerTouchGestureKind {
+    #[default]
+    Move,
+    Down,
+}
+
+#[derive(Resource, Default)]
+pub(crate) struct OneFingerTouchGestureState {
+    pub(crate) kind: OneFingerTouchGestureKind,
+    pub(crate) position: Vec2,
 }
 
 fn structure_center_and_extents(sv: &StructureView) -> Option<(Vec3, Vec3)> {
@@ -3358,7 +3370,8 @@ pub(crate) fn camera_controls(
     time: Res<Time>,
     mut mouse_motion_events: EventReader<MouseMotion>,
     mut mouse_wheel_events: EventReader<MouseWheel>,
-    mut touch_gestures: ResMut<TouchGestureState>,
+    mut one_finger_touch_gestures: ResMut<OneFingerTouchGestureState>,
+    mut two_fingers_touch_gestures: ResMut<TwoFingersTouchGestureState>,
     mut camera_rig: ResMut<CameraRig>,
     windows: Query<&Window>,
     ui_interactions: Query<&Interaction, With<Button>>,
@@ -3366,19 +3379,18 @@ pub(crate) fn camera_controls(
 ) {
     if let Ok(mut transform) = camera_query.single_mut() {
         let mut zoom_change = 0.0;
-        let mut pan_request = Vec2::ZERO;
-        let mut rotate_request = Vec2::ZERO;
-        let touch_rotate = touch_gestures.rotate;
-        let touch_pan = touch_gestures.pan;
-        let touch_zoom = touch_gestures.zoom;
-        touch_gestures.rotate = Vec2::ZERO;
-        touch_gestures.pan = Vec2::ZERO;
-        touch_gestures.zoom = 0.0;
+
+        let cursor_pos = one_finger_touch_gestures.position;
+        let touch_pan = two_fingers_touch_gestures.pan;
+        let touch_zoom = two_fingers_touch_gestures.zoom;
+        one_finger_touch_gestures.position = Vec2::ZERO;
+        two_fingers_touch_gestures.pan = Vec2::ZERO;
+        two_fingers_touch_gestures.zoom = 0.0;
+
         let ui_active = ui_interactions.iter().any(|i| *i != Interaction::None);
 
         const MIN_DISTANCE: f32 = 0.2;
         const MAX_DISTANCE: f32 = 200.0;
-        const TOUCH_ZOOM_SCALE: f32 = -1.0;
 
         let mut mouse_delta = Vec2::ZERO;
         for motion in mouse_motion_events.read() {
@@ -3393,17 +3405,48 @@ pub(crate) fn camera_controls(
             return;
         }
 
-        if (mouse_buttons.pressed(MouseButton::Left) || touch_rotate != Vec2::ZERO)
-            && !keyboard.pressed(KeyCode::ShiftLeft)
-        {
+        debug!("cursor_pos: {cursor_pos}");
+        if cursor_pos != vec2(0.0, 0.0) {
+            let Ok(window) = windows.single() else { return };
+            let window_size = Vec2::new(window.width(), window.height());
+
+            if matches!(
+                one_finger_touch_gestures.kind,
+                OneFingerTouchGestureKind::Down
+            ) {
+                state.prev_cursor = Some(cursor_pos);
+                return;
+            }
+
+            debug!("cursor: {cursor_pos}");
+            debug!("state.prev_cursor: {:?}", state.prev_cursor);
+            if let Some(prev) = state.prev_cursor {
+                let prev = normalize_mouse(prev, window_size);
+                let curr = normalize_mouse(cursor_pos, window_size);
+
+                let v0 = arcball_vector(prev);
+                let v1 = arcball_vector(curr);
+
+                let cam_rot = transform.rotation;
+                let rotation_cam = arcball_quat(v0, v1);
+                let rotation_cam = rotation_cam.normalize();
+                let rotation_world = cam_rot * rotation_cam * cam_rot.inverse();
+                let rotation_world = rotation_world.normalize();
+
+                let mut offset = transform.translation - camera_rig.target;
+
+                offset = rotation_world * offset;
+
+                transform.translation = camera_rig.target + offset;
+                transform.rotation = (rotation_world * transform.rotation).normalize();
+
+                state.prev_cursor = Some(cursor_pos);
+            }
+        }
+
+        if (mouse_buttons.pressed(MouseButton::Left)) && !keyboard.pressed(KeyCode::ShiftLeft) {
             // This is a direct-view arcball control implementation.
-            if mouse_buttons.pressed(MouseButton::Left) {
-                rotate_request += mouse_delta;
-            }
-            if touch_rotate != Vec2::ZERO {
-                rotate_request += touch_rotate;
-            }
-            let window = windows.single().unwrap();
+            let Ok(window) = windows.single() else { return };
             let Some(cursor) = window.cursor_position() else {
                 return;
             };
@@ -3414,6 +3457,7 @@ pub(crate) fn camera_controls(
 
             let window_size = Vec2::new(window.width(), window.height());
             if let Some(prev) = state.prev_cursor {
+                // mouse event
                 let prev = normalize_mouse(prev, window_size);
                 let curr = normalize_mouse(cursor, window_size);
 
@@ -3432,15 +3476,14 @@ pub(crate) fn camera_controls(
 
                 transform.translation = camera_rig.target + offset;
                 transform.rotation = (rotation_world * transform.rotation).normalize();
-            }
 
-            state.prev_cursor = Some(cursor);
+                state.prev_cursor = Some(cursor);
+            }
         }
 
         if mouse_buttons.pressed(MouseButton::Right) {
             // Pan
-            //
-            pan_request = mouse_delta;
+            let pan_request = mouse_delta;
 
             // Keep camera offset updated relative to target.
             let mut offset = transform.translation - camera_rig.target;
@@ -3448,7 +3491,38 @@ pub(crate) fn camera_controls(
                 offset = Vec3::new(0.0, 0.0, camera_rig.distance.max(1.0));
             }
 
-            // FPS-style keyboard movement of the camera perspective.
+            let distance = offset.length().max(MIN_DISTANCE);
+            let right = transform.right();
+            let up = transform.up();
+
+            if pan_request != Vec2::ZERO {
+                let pan_speed = 0.0005 * distance;
+                let pan_offset = (-pan_request.x * right + pan_request.y * up) * pan_speed;
+                camera_rig.target += pan_offset;
+            }
+
+            let direction = offset.normalize_or_zero();
+            offset = if direction.length_squared() > 0.0 {
+                direction * distance
+            } else {
+                // TODO: ??? why needed?
+                Vec3::new(0.0, 0.0, distance)
+            };
+
+            transform.translation = camera_rig.target + offset;
+        }
+
+        info!("touch_pan: {touch_pan}");
+        if touch_pan != vec2(0.0, 0.0) {
+            // Pan
+            let pan_request = touch_pan;
+
+            // Keep camera offset updated relative to target.
+            let mut offset = transform.translation - camera_rig.target;
+            if offset.length_squared() < f32::EPSILON {
+                offset = Vec3::new(0.0, 0.0, camera_rig.distance.max(1.0));
+            }
+
             let distance = offset.length().max(MIN_DISTANCE);
             let right = transform.right();
             let up = transform.up();
@@ -3488,6 +3562,21 @@ pub(crate) fn camera_controls(
             transform.translation = camera_rig.target + offset;
         }
 
+        if touch_zoom != 0.0 {
+            // Keep camera offset updated relative to target.
+            let mut offset = transform.translation - camera_rig.target;
+            if offset.length_squared() < f32::EPSILON {
+                offset = Vec3::new(0.0, 0.0, camera_rig.distance.max(1.0));
+            }
+            let direction = offset.normalize_or_zero();
+            let mut distance = offset.length().max(MIN_DISTANCE);
+            let factor = (1.0 - touch_zoom).clamp(0.2, 5.0);
+            distance = (distance * factor).clamp(MIN_DISTANCE, MAX_DISTANCE);
+            camera_rig.distance = distance;
+            offset = direction * distance;
+            transform.translation = camera_rig.target + offset;
+        }
+
         if keyboard.pressed(KeyCode::KeyQ)
             || keyboard.pressed(KeyCode::KeyE)
             || keyboard.pressed(KeyCode::KeyW)
@@ -3497,9 +3586,9 @@ pub(crate) fn camera_controls(
             || keyboard.pressed(KeyCode::ShiftLeft)
             || keyboard.pressed(KeyCode::ShiftRight)
         {
-            let ROTATE_SPEED = 1.8;
-            let MOVE_SPEED = 5.0;
-            let SPRINT_SPEED = 10.0;
+            const ROTATE_SPEED: f32 = 1.8;
+            const MOVE_SPEED: f32 = 5.0;
+            const SPRINT_SPEED: f32 = 10.0;
             // --- YAW rotation (Q/E) ---
             let mut offset = transform.translation - camera_rig.target;
             let mut yaw = 0.0;
@@ -3546,81 +3635,6 @@ pub(crate) fn camera_controls(
                 transform.translation += step;
             }
         }
-
-        // if !ui_active && touch_pan != Vec2::ZERO {
-        //     pan_request += touch_pan;
-        // }
-
-        // if !ui_active {
-        //     for wheel in mouse_wheel_events.read() {
-        //         zoom_change -= wheel.y * 0.002;
-        //     }
-        // }
-        // if !ui_active && touch_zoom != 0.0 {
-        //     zoom_change += touch_zoom * TOUCH_ZOOM_SCALE;
-        // }
-        //
-        // // Keep camera offset updated relative to target.
-        // let mut offset = transform.translation - camera_rig.target;
-        // if offset.length_squared() < f32::EPSILON {
-        //     offset = Vec3::new(0.0, 0.0, camera_rig.distance.max(1.0));
-        // }
-        //
-        // // FPS-style keyboard movement of the camera perspective.
-        // let distance = offset.length().max(MIN_DISTANCE);
-        // let forward = (-offset).normalize_or_zero();
-        // let mut right = forward.cross(Vec3::Y).normalize_or_zero();
-        // if right.length_squared() < f32::EPSILON {
-        //     right = Vec3::X;
-        // }
-        // let mut move_dir = Vec3::ZERO;
-        // if keyboard.pressed(KeyCode::KeyW) {
-        //     move_dir += forward;
-        // }
-        // if keyboard.pressed(KeyCode::KeyS) {
-        //     move_dir -= forward;
-        // }
-        // if keyboard.pressed(KeyCode::KeyD) {
-        //     move_dir += right;
-        // }
-        // if keyboard.pressed(KeyCode::KeyA) {
-        //     move_dir -= right;
-        // }
-        // if move_dir.length_squared() > 0.0 {
-        //     let sprint =
-        //         keyboard.pressed(KeyCode::ShiftLeft) || keyboard.pressed(KeyCode::ShiftRight);
-        //     let move_speed = if sprint { 10.0 } else { 5.0 };
-        //     // Scale keyboard movement with viewing distance so large structures
-        //     // don't feel sluggish and small structures don't feel too twitchy.
-        //     let distance_factor = (distance * 0.25).clamp(0.5, 12.0);
-        //     let step = move_dir.normalize() * move_speed * distance_factor * time.delta_secs();
-        //     camera_rig.target += step;
-        // }
-        //
-        // if pan_request != Vec2::ZERO {
-        //     let up = right.cross(forward).normalize_or_zero();
-        //     let pan_speed = 0.002 * distance;
-        //     let pan_offset = (-pan_request.x * right + pan_request.y * up) * pan_speed;
-        //     camera_rig.target += pan_offset;
-        // }
-        //
-        // let mut distance = offset.length().max(MIN_DISTANCE);
-        // if zoom_change != 0.0 {
-        //     let factor = (1.0 + zoom_change).clamp(0.2, 5.0);
-        //     distance = (distance * factor).clamp(MIN_DISTANCE, MAX_DISTANCE);
-        // }
-        //
-        // let direction = offset.normalize_or_zero();
-        // offset = if direction.length_squared() > 0.0 {
-        //     direction * distance
-        // } else {
-        //     Vec3::new(0.0, 0.0, distance)
-        // };
-        //
-        // transform.translation = camera_rig.target + offset;
-        // transform.look_at(camera_rig.target, Vec3::Y);
-        // transform.scale = Vec3::ONE;
-        // camera_rig.distance = distance;
     }
 }
 
