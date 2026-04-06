@@ -45,7 +45,8 @@ use crate::ui::{
     transition_to_running_on_structure_loaded, update_atom_hover_cache, update_atom_hover_label,
     update_bond_order_legend, update_color_mode_availability, update_file_ui,
     update_gizmo_viewport, update_scene, update_selected_atom_from_click,
-    update_structure_loading_overlay, AppUiState, CatalogLoadChannel, TouchGestureState,
+    update_structure_loading_overlay, AppUiState, ArcballState, CatalogLoadChannel,
+    OneFingerTouchGestureKind, OneFingerTouchGestureState, TwoFingersTouchGestureState,
 };
 use crate::ui::{setup_buttons, spawn_axis};
 
@@ -87,15 +88,16 @@ pub enum WebEvent {
     },
     TouchGesture {
         kind: TouchGestureKind,
-        dx: f32,
-        dy: f32,
+        x: f32,
+        y: f32,
         scale_delta: f32,
     },
 }
 
 #[derive(Clone, Copy, Debug)]
 pub enum TouchGestureKind {
-    Rotate,
+    OneFingerDown,
+    OneFingerMove,
     TwoFinger,
 }
 
@@ -108,13 +110,16 @@ impl<'de> serde::Deserialize<'de> for TouchGestureKind {
         let normalized = raw.trim().to_ascii_lowercase().replace(['_', '-'], "");
 
         match normalized.as_str() {
-            "rotate" => Ok(Self::Rotate),
+            "onefingerdown" => Ok(Self::OneFingerDown),
+            "onefingermove" => Ok(Self::OneFingerMove),
             "twofinger" => Ok(Self::TwoFinger),
             _ => Err(de::Error::unknown_variant(
                 &raw,
                 &[
-                    "Rotate",
-                    "rotate",
+                    "OneFingerMove",
+                    "OnefingerDown",
+                    "Onefingermove",
+                    "Onefingerdown",
                     "TwoFinger",
                     "two_finger",
                     "Two_Finger",
@@ -130,8 +135,8 @@ impl<'de> serde::Deserialize<'de> for TouchGestureKind {
 #[serde(rename_all = "snake_case")]
 struct TouchGesturePayload {
     gesture: TouchGestureKind,
-    dx: f32,
-    dy: f32,
+    x: f32,
+    y: f32,
     scale_delta: f32,
 }
 
@@ -369,8 +374,8 @@ fn register_touch_gesture_listener() -> Option<()> {
 
             send_event(WebEvent::TouchGesture {
                 kind: payload.gesture,
-                dx: payload.dx,
-                dy: payload.dy,
+                x: payload.x,
+                y: payload.y,
                 scale_delta: payload.scale_delta,
             });
         },
@@ -400,10 +405,12 @@ pub fn run_app() {
         })
         .init_resource::<FileDragDrop>()
         .init_resource::<CatalogLoadChannel>()
-        .init_resource::<TouchGestureState>()
+        .init_resource::<TwoFingersTouchGestureState>()
+        .init_resource::<OneFingerTouchGestureState>()
         .init_resource::<AtomColorMode>()
         .init_resource::<BondInferenceSettings>()
         .init_resource::<BondCache>()
+        .init_resource::<ArcballState>()
         .init_state::<AppUiState>()
         .add_event::<UpdateStructure>()
         .add_event::<bevy::window::FileDragAndDrop>()
@@ -536,7 +543,8 @@ fn web_event_observer(
     mut file_drag_drop: ResMut<FileDragDrop>,
     mut next_ui_state: ResMut<NextState<AppUiState>>,
     mut commands: Commands,
-    mut touch_gesture_state: ResMut<TouchGestureState>,
+    mut two_fingers_touch_gesture_state: ResMut<TwoFingersTouchGestureState>,
+    mut one_finger_touch_gesture_state: ResMut<OneFingerTouchGestureState>,
 ) {
     match trigger.event() {
         WebEvent::Drop {
@@ -581,16 +589,21 @@ fn web_event_observer(
         }
         WebEvent::TouchGesture {
             kind,
-            dx,
-            dy,
+            x,
+            y,
             scale_delta,
         } => match kind {
-            TouchGestureKind::Rotate => {
-                touch_gesture_state.rotate += Vec2::new(*dx, *dy);
+            TouchGestureKind::OneFingerMove => {
+                one_finger_touch_gesture_state.position = Vec2::new(*x, *y);
+                one_finger_touch_gesture_state.kind = OneFingerTouchGestureKind::Move;
+            }
+            TouchGestureKind::OneFingerDown => {
+                one_finger_touch_gesture_state.position = Vec2::new(*x, *y);
+                one_finger_touch_gesture_state.kind = OneFingerTouchGestureKind::Down;
             }
             TouchGestureKind::TwoFinger => {
-                touch_gesture_state.pan += Vec2::new(*dx, *dy);
-                touch_gesture_state.zoom += *scale_delta;
+                two_fingers_touch_gesture_state.pan += Vec2::new(*x, *y);
+                two_fingers_touch_gesture_state.zoom += *scale_delta;
             }
         },
     }
