@@ -28,7 +28,7 @@ jobs:
 
       - name: Install wasm-pack
         run: |
-          curl https://drager.github.io/wasm-pack/installer/init.sh -sSf | bash
+          curl https://wasm-bindgen.github.io/wasm-pack/installer/init.sh -sSf | bash
 
       - name: Build WASM
         run: |
